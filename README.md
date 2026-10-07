@@ -216,8 +216,11 @@ Los artefactos se descargan desde la página *Summary* de cada ejecución en la 
 ### Flujo de ramas
 
 - `main`: producción. `develop`: integración. Cambios nuevos en `feature/<clave-jira>-<descripcion>`.
-- `main` y `develop` están protegidas: solo se fusiona por Pull Request y con los checks
-  *Compilar y probar* y *Construir imagen Docker* en verde. No se permite push directo ni force push.
+- `main` y `develop` están protegidas (también para administradores):
+  - Solo se fusiona por Pull Request, con **una aprobación** de otro miembro del equipo.
+  - Los checks *Compilar y probar* y *Construir imagen Docker* deben estar en verde y la rama al día.
+  - Las conversaciones del Pull Request deben quedar resueltas.
+  - No se permite push directo, force push ni borrar la rama.
 
 ## Equipo
 
