@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compilar y probar
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fatfish_test
+          POSTGRES_USER: fatfish
+          POSTGRES_PASSWORD: fatfish
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fatfish -d fatfish_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Read by the "test" Spring profile (src/test/resources/application-test.properties)
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/fatfish_test
+      DB_USER: fatfish
+      DB_PASSWORD: fatfish
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configurar Java 21 (Temurin) con caché de Maven
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Dar permisos de ejecución a Maven Wrapper
+        run: chmod +x mvnw
+
+      - name: Pruebas (unitarias, controller e integración)
+        run: ./mvnw -B test
+
+      - name: Empaquetar
+        run: ./mvnw -B package -DskipTests
+
+      - name: Subir artefacto (.jar)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fat-fish-api-jar
+          path: target/*.jar
+          if-no-files-found: error
+
+      - name: Subir reportes de pruebas (surefire)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: warn
