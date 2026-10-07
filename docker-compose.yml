@@ -1,0 +1,39 @@
+# Local development environment for Fat Fish API.
+#   docker compose up -d            -> PostgreSQL only (run the API with ./mvnw spring-boot:run)
+#   docker compose --profile app up -d --build   -> PostgreSQL + API in a container
+services:
+  postgres:
+    image: postgres:17
+    container_name: fatfish-postgres
+    environment:
+      POSTGRES_DB: fatfish
+      POSTGRES_USER: ${DB_USER:-fatfish}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-fatfish}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - fatfish-data:/var/lib/postgresql/data
+      # Creates the fatfish_test database used by the integration tests (first start only)
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d fatfish"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ["app"]
+    build: .
+    container_name: fatfish-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/fatfish
+      DB_USER: ${DB_USER:-fatfish}
+      DB_PASSWORD: ${DB_PASSWORD:-fatfish}
+    ports:
+      - "8080:8080"
+
+volumes:
+  fatfish-data:
