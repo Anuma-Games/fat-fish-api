@@ -29,6 +29,7 @@ src/main/java/com/fatfish/api
 └── config       # Configuración de OpenAPI
 src/main/resources/db/migration   # Migraciones de Flyway (V1__initial_schema.sql)
 .github/workflows/ci.yml          # Pipeline de CI
+.github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
 ```
 
 ## Requisitos
@@ -192,13 +193,34 @@ Historial paginado (la página empieza en 0, `size` máximo 100), de la partida 
 ## Integración continua
 
 El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) corre en cada push a `main` y `develop`
-y en cada Pull Request hacia `main`:
+y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
 
-1. Levanta un servicio `postgres:16` con healthcheck.
+**Compilar y probar**
+
+1. Levanta un servicio `postgres:17` con healthcheck (misma versión que en local).
 2. Configura Java 21 (Temurin) con caché de Maven.
 3. `./mvnw test` (unitarias, controller e integración).
-4. `./mvnw package -DskipTests`.
-5. Sube como artefactos el `.jar` y los reportes de Surefire (estos últimos siempre, aunque fallen las pruebas).
+4. Publica en el *Summary* de la ejecución una tabla con los resultados de las pruebas
+   ([`.github/scripts/test_summary.py`](.github/scripts/test_summary.py)), aunque fallen.
+5. `./mvnw package -DskipTests`.
+6. Sube como artefactos el `.jar` y los reportes de Surefire (estos últimos siempre, aunque fallen las pruebas).
+
+**Construir imagen Docker** (solo si el job anterior pasa)
+
+1. Construye la imagen con el `Dockerfile` multi-stage (todavía no se publica en un registro).
+2. Publica en el *Summary* el nombre y tamaño de la imagen.
+
+Los artefactos se descargan desde la página *Summary* de cada ejecución en la pestaña **Actions**
+(sección *Artifacts*) o con `gh run download`.
+
+### Flujo de ramas
+
+- `main`: producción. `develop`: integración. Cambios nuevos en `feature/<clave-jira>-<descripcion>`.
+- `main` y `develop` están protegidas (también para administradores):
+  - Solo se fusiona por Pull Request, con **una aprobación** de otro miembro del equipo.
+  - Los checks *Compilar y probar* y *Construir imagen Docker* deben estar en verde y la rama al día.
+  - Las conversaciones del Pull Request deben quedar resueltas.
+  - No se permite push directo, force push ni borrar la rama.
 
 ## Equipo
 
