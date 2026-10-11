@@ -221,6 +221,8 @@ Los artefactos se descargan desde la página *Summary* de cada ejecución en la 
   - Los checks *Compilar y probar* y *Construir imagen Docker* deben estar en verde y la rama al día.
   - Las conversaciones del Pull Request deben quedar resueltas.
   - No se permite push directo, force push ni borrar la rama.
+- `CODEOWNERS` asigna revisores automáticamente y la plantilla de PR pide el ticket de Jira y cómo probar el cambio.
+- Dependabot revisa cada semana las dependencias (Maven, acciones de GitHub e imagen de Docker) y abre PRs hacia `develop`.
 
 ## Equipo
 
