@@ -1,6 +1,6 @@
 # Fat Fish API
 
-[![CI](https://github.com/andrikesquer/fat-fish-api/actions/workflows/ci.yml/badge.svg)](https://github.com/andrikesquer/fat-fish-api/actions/workflows/ci.yml)
+[![CI](https://github.com/Anuma-Games/fat-fish-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Anuma-Games/fat-fish-api/actions/workflows/ci.yml)
 
 Prototipo del backend del videojuego **Fat Fish** (proyecto integrador, grupo IDGS101N, UTCH).
 
