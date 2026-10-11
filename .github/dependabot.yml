@@ -23,5 +23,9 @@ updates:
     target-branch: develop
     schedule:
       interval: monthly
+    # El proyecto usa Java 21 (pom.xml, CI y arquitectura): solo parches y versiones menores de la imagen.
+    ignore:
+      - dependency-name: eclipse-temurin
+        update-types: [version-update:semver-major]
     commit-message:
       prefix: deps
