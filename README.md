@@ -78,6 +78,15 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish ./mvnw spring-boot:run
 
 Flyway aplica las migraciones al arrancar.
 
+**Perfil `lab` (laboratorio de pruebas de la PWA):** agrega una línea de log por petición (método, ruta, código,
+tiempo, tamaños y memoria), el SQL con sus parámetros y las métricas JDBC de cada transacción, en consola y en
+`logs/fat-fish-api-lab.log`. Los pasos completos del laboratorio están en el repositorio
+[`fat-fish-pwa`](https://github.com/Anuma-Games/fat-fish-pwa/tree/main/docs/laboratorio-pruebas).
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=lab
+```
+
 También puedes levantar la API y la base de datos en contenedores:
 
 ```bash
@@ -175,6 +184,37 @@ Historial paginado (la página empieza en 0, `size` máximo 100), de la partida 
 }
 ```
 
+### `GET /api/pwa/perfil?id=1`
+
+Alias, fechas y las seis estadísticas del expediente (partidas, ganadas, invertido, perdido, racha máxima de
+derrotas y tiempo jugado), calculadas con todas las partidas del jugador.
+
+### `GET /api/pwa/partidas?id=1&pagina=0&tamano=10`
+
+Historial del jugador para la PWA, con nombres de campo en español (`tamano` máximo 50). `id` es el `id` de la tabla
+`jugador`. `generadoEn` indica cuándo
+se generó la respuesta, para mostrar la antigüedad de los datos cuando la PWA los sirve desde la caché sin conexión.
+
+```json
+{
+  "contenido": [
+    { "id": "b0000000-…-0008", "resultado": "VICTORIA", "rondaAlcanzada": 9, "puntaje": 1510,
+      "dineroInvertido": 9100, "dineroGanado": 11200, "dineroPerdido": 1900, "duracionSeg": 2645,
+      "creadaEn": "2026-10-13T22:00:00Z" }
+  ],
+  "pagina": 0, "tamano": 10, "totalElementos": 8, "totalPaginas": 1, "ultima": true,
+  "generadoEn": "2026-10-15T00:43:05Z"
+}
+```
+
+### `POST /api/pwa/retroalimentacion`
+
+Guarda una retroalimentación anónima. `categoria`: `ERROR`, `SUGERENCIA` u `OTRO`; `componente`: `JUEGO`, `PWA`
+u `OTRO`; `mensaje`: de 10 a 1000 caracteres. Responde `201` con `{ "id": "5", "creadaEn": "…" }`.
+
+La cabecera opcional `Idempotency-Key` (UUID) evita duplicados: la PWA la genera al guardar el envío y la repite en
+cada reintento; si la clave ya existe, la API responde `200` con el registro guardado y no inserta otro.
+
 ## Modelo de datos
 
 | Tabla | Descripción |
@@ -183,6 +223,8 @@ Historial paginado (la página empieza en 0, `size` máximo 100), de la partida 
 | `installations` | Copias del juego; `player_id` es nulo hasta vincularla a un jugador |
 | `runs` | Partidas; `run_id` (UUID generado por el juego) es la llave primaria. `pawned_assets` y `most_desperate_spin` son JSONB |
 | `run_items` | Objetos comprados en cada partida, en orden |
+| `jugador`, `partida` | Tablas de la PWA con `id` numérico (migración `V2`); el laboratorio las llena con scripts SQL |
+| `retroalimentacion` | Retroalimentación enviada desde la PWA; `clave_idempotencia` es única (migración `V2`) |
 
 **Decisiones provisionales del prototipo** (hasta tener autenticación y vinculación de instalaciones):
 
@@ -226,4 +268,12 @@ Los artefactos se descargan desde la página *Summary* de cada ejecución en la 
 
 ## Equipo
 
-Proyecto integrador IDGS101N, Universidad Tecnológica de Chihuahua.
+**Anuma Games**, Proyecto integrador, grupo IDGS101N, Universidad Tecnológica de Chihuahua.
+
+| Integrante |
+|---|
+| Luis Ángel Gaxiola Gamboa |
+| Emmanuel González Hernández |
+| Jesús Antonio Jiménez Mendoza |
+| Ángel Gael Jurado Rodríguez |
+| Andrik Rivera Esquer |
