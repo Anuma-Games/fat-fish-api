@@ -11,6 +11,12 @@ public class PlayerNotFoundException extends RuntimeException {
         this.playerId = playerId;
     }
 
+    /** Player of the PWA (table jugador), looked up by its numeric id. */
+    public PlayerNotFoundException(long number) {
+        super("No existe el jugador #" + number);
+        this.playerId = null;
+    }
+
     public UUID getPlayerId() {
         return playerId;
     }
