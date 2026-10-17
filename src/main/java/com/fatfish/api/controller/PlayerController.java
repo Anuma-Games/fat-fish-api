@@ -26,6 +26,14 @@ public class PlayerController {
         this.playerService = playerService;
     }
 
+
+    @GetMapping ("/newuser")
+    @Operation(summary = "Crea un nuevo jugador",
+            description = "Crea un nuevo jugador, si existe manda 0, si es nuevo 1.")
+    public int createNewPlayer(@PathVariable int playerId) {
+        return playerService.createNewPlayer(playerId);
+    }
+
     @GetMapping("/runs")
     @Operation(summary = "Historial paginado de partidas",
             description = "Ordenado de la más reciente a la más antigua. La página empieza en 0.")

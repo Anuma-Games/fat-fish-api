@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@Transactional(readOnly = true)
+
 public class PlayerService {
 
     private final PlayerRepository playerRepository;
@@ -24,6 +24,12 @@ public class PlayerService {
         this.playerRepository = playerRepository;
         this.runRepository = runRepository;
     }
+
+
+    public int createNewPlayer(int playerId) {
+        return playerRepository.createNewPlayer(playerId);
+    }
+
 
     /** Run history, most recent first. */
     public PageResponse<RunRecord> getRuns(UUID playerId, int page, int size) {
