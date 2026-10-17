@@ -34,6 +34,11 @@ public class GlobalExceptionHandler {
                 .body(problem(HttpStatus.UNAUTHORIZED, "No autorizado", ex.getMessage()));
     }
 
+    @ExceptionHandler(InvalidCredentialsException.class)
+    ProblemDetail handleInvalidCredentials(InvalidCredentialsException ex) {
+        return problem(HttpStatus.UNAUTHORIZED, "No autorizado", ex.getMessage());
+    }
+
     @ExceptionHandler(InvalidMatchException.class)
     ProblemDetail handleInvalidMatch(InvalidMatchException ex) {
         return problem(HttpStatus.BAD_REQUEST, "Partida inválida", ex.getMessage());

@@ -10,7 +10,7 @@ y expone su perfil e historial para la PWA y la app móvil.
 
 ## Tecnologías
 
-- Java 21, Spring Boot 4 (Web MVC, Data JPA, Validation, Actuator)
+- Java 21, Spring Boot 4 (Web MVC, Data JPA, Validation, Actuator) y `spring-security-crypto` (BCrypt)
 - PostgreSQL 17 (local con Docker Compose) y migraciones con Flyway
 - OpenAPI / Swagger UI (springdoc-openapi)
 - JUnit 5, Mockito, MockMvc y pruebas de integración contra PostgreSQL real
@@ -28,6 +28,7 @@ src/main/java/com/fatfish/api
 ├── exception    # Manejo de errores (Problem Details, mensajes en español)
 └── config       # Configuración de OpenAPI
 src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql)
+docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
 ```
@@ -138,10 +139,11 @@ Los errores siguen el formato Problem Details (RFC 9457) con mensajes en españo
 
 ### `POST /api/juego/registro`
 
-Crea el jugador y sus estadísticas en cero. `alias`: de 3 a 24 caracteres (se puede repetir).
+Crea el jugador y sus estadísticas en cero. `alias`: de 3 a 24 caracteres (se puede repetir);
+`contrasena`: de 8 a 72 caracteres, se guarda con BCrypt (`jugador.contrasena_hash`).
 
 ```json
-{ "alias": "andrik" }
+{ "alias": "andrik", "contrasena": "pez-gordo-2026" }
 ```
 
 Responde `201`:
@@ -152,6 +154,27 @@ Responde `201`:
 
 El token solo se entrega aquí. El juego lo guarda en el dispositivo y lo envía en la cabecera
 `Authorization: Bearer <token>`; la base de datos solo guarda su SHA-256 (`jugador.token_hash`).
+
+### `POST /api/juego/sesion`
+
+Para usar la cuenta en otro dispositivo (o si el juego perdió el token). Con el id y la contraseña responde `200`
+con un token nuevo, en el mismo formato que el registro; **el token anterior deja de funcionar**. Si el id no existe
+o la contraseña es incorrecta responde `401` con el mismo mensaje, para no revelar qué ids existen.
+
+```json
+{ "jugadorId": 5, "contrasena": "pez-gordo-2026" }
+```
+
+### `PUT /api/juego/contrasena`
+
+Requiere `Authorization: Bearer <token>`. Cambia la contraseña sin pedir la anterior: el token demuestra que es el
+dueño de la cuenta, así que el jugador puede recuperarla desde el dispositivo donde juega. Responde `204`.
+
+```json
+{ "contrasenaNueva": "otra-clave-segura" }
+```
+
+Si el jugador pierde el dispositivo y también olvidó la contraseña, la cuenta no se puede recuperar.
 
 ### `POST /api/juego/partidas`
 
@@ -212,9 +235,15 @@ cada reintento; si la clave ya existe, la API responde `200` con el registro gua
 
 Una sola migración (`V1__esquema_inicial.sql`) crea todas las tablas y carga el catálogo de comodines.
 
+![Modelo de datos](docs/diagramas/modelo-datos.png)
+
+<sub>Código del diagrama: [`docs/diagramas/modelo-datos.mmd`](docs/diagramas/modelo-datos.mmd). La simbología y la
+descripción de cada tabla están en el [README de la PWA](https://github.com/Anuma-Games/fat-fish-pwa#3-modelo-de-datos);
+si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
+
 | Tabla | Descripción |
 |---|---|
-| `jugador` | Jugadores registrados desde el juego; `token_hash` es el SHA-256 de su token |
+| `jugador` | Jugadores registrados desde el juego; `contrasena_hash` (BCrypt) y `token_hash` (SHA-256 del token) nunca salen en la API |
 | `estadistica_jugador` | Totales de cada jugador (1:1 con `jugador`); el ranking se ordena por `puntaje_maximo` y desempata con `puntaje_maximo_en` |
 | `partida` | Partidas terminadas; `(jugador_id, numero_local)` es único |
 | `comodin` | Catálogo de los 4 comodines del MVP |

@@ -8,7 +8,10 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 
-/** Player registered from the game (table "jugador"). Only the SHA-256 of its token is stored. */
+/**
+ * Player registered from the game (table "jugador"). The password is stored with BCrypt and the token
+ * only as its SHA-256.
+ */
 @Entity
 @Table(name = "jugador")
 public class Player {
@@ -19,6 +22,9 @@ public class Player {
 
     @Column(name = "alias", nullable = false, length = 24)
     private String alias;
+
+    @Column(name = "contrasena_hash", nullable = false, length = 60)
+    private String passwordHash;
 
     @Column(name = "token_hash", nullable = false, unique = true, length = 64)
     private String tokenHash;
@@ -32,8 +38,9 @@ public class Player {
     protected Player() {
     }
 
-    public Player(String alias, String tokenHash) {
+    public Player(String alias, String passwordHash, String tokenHash) {
         this.alias = alias;
+        this.passwordHash = passwordHash;
         this.tokenHash = tokenHash;
         this.createdAt = Instant.now();
     }
@@ -46,8 +53,21 @@ public class Player {
         return alias;
     }
 
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
     public String getTokenHash() {
         return tokenHash;
+    }
+
+    /** Replaces the token after a login; the previous token stops working. */
+    public void setTokenHash(String tokenHash) {
+        this.tokenHash = tokenHash;
     }
 
     public Instant getCreatedAt() {

@@ -57,7 +57,7 @@ class PwaApiIntegrationTest {
 
     @Test
     void returnsTheProfileAndHistoryOfAPlayer() throws Exception {
-        jdbc.update("INSERT INTO jugador (alias, token_hash, ultima_actividad) VALUES ('jesus', 'hash-1', '2026-10-02 10:00Z')");
+        jdbc.update("INSERT INTO jugador (alias, contrasena_hash, token_hash, ultima_actividad) VALUES ('jesus', 'bcrypt-1', 'hash-1', '2026-10-02 10:00Z')");
         jdbc.update("""
                 INSERT INTO estadistica_jugador (jugador_id, puntaje_maximo, puntaje_maximo_en, partidas_totales,
                     partidas_ganadas, dinero_invertido, dinero_ganado, dinero_perdido, racha_derrotas_max,

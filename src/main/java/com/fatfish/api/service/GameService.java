@@ -1,10 +1,13 @@
 package com.fatfish.api.service;
 
+import com.fatfish.api.dto.juego.ChangePasswordRequest;
 import com.fatfish.api.dto.juego.JokerUsageRequest;
+import com.fatfish.api.dto.juego.LoginRequest;
 import com.fatfish.api.dto.juego.MatchRequest;
 import com.fatfish.api.dto.juego.MatchResponse;
 import com.fatfish.api.dto.juego.RegisterRequest;
 import com.fatfish.api.dto.juego.SessionResponse;
+import com.fatfish.api.exception.InvalidCredentialsException;
 import com.fatfish.api.exception.InvalidMatchException;
 import com.fatfish.api.exception.InvalidTokenException;
 import com.fatfish.api.model.JokerUsage;
@@ -20,10 +23,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Operations used by the game ({@code /api/juego}): registration and match upload. */
+/** Operations used by the game ({@code /api/juego}): registration, login, password change and match upload. */
 @Service
 public class GameService {
 
@@ -34,23 +38,49 @@ public class GameService {
     private final MatchRepository matchRepository;
     private final JokerRepository jokerRepository;
     private final TokenService tokenService;
+    private final PasswordEncoder passwordEncoder;
 
     public GameService(PlayerRepository playerRepository, PlayerStatisticsRepository statisticsRepository,
-            MatchRepository matchRepository, JokerRepository jokerRepository, TokenService tokenService) {
+            MatchRepository matchRepository, JokerRepository jokerRepository, TokenService tokenService,
+            PasswordEncoder passwordEncoder) {
         this.playerRepository = playerRepository;
         this.statisticsRepository = statisticsRepository;
         this.matchRepository = matchRepository;
         this.jokerRepository = jokerRepository;
         this.tokenService = tokenService;
+        this.passwordEncoder = passwordEncoder;
     }
 
     /** Creates the player with empty statistics and returns its id and token. */
     @Transactional
     public SessionResponse register(RegisterRequest request) {
         String token = tokenService.newToken();
-        Player player = playerRepository.save(new Player(request.alias().strip(), tokenService.hash(token)));
+        Player player = playerRepository.save(new Player(
+                request.alias().strip(), passwordEncoder.encode(request.contrasena()), tokenService.hash(token)));
         statisticsRepository.save(new PlayerStatistics(player.getId()));
         return new SessionResponse(String.valueOf(player.getId()), token);
+    }
+
+    /**
+     * Checks the id and password and gives the device a new token; the previous token stops working.
+     * An unknown id and a wrong password get the same error so the response does not reveal which ids exist.
+     */
+    @Transactional
+    public SessionResponse login(LoginRequest request) {
+        Player player = playerRepository.findById(request.jugadorId())
+                .filter(found -> passwordEncoder.matches(request.contrasena(), found.getPasswordHash()))
+                .orElseThrow(InvalidCredentialsException::new);
+        String token = tokenService.newToken();
+        player.setTokenHash(tokenService.hash(token));
+        player.setLastActivity(Instant.now());
+        return new SessionResponse(String.valueOf(player.getId()), token);
+    }
+
+    /** Changes the password of the token owner without asking for the old one (the token proves it is the owner). */
+    @Transactional
+    public void changePassword(String authorization, ChangePasswordRequest request) {
+        Player player = authenticate(authorization);
+        player.setPasswordHash(passwordEncoder.encode(request.contrasenaNueva()));
     }
 
     /**

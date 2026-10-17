@@ -4,6 +4,6 @@ package com.fatfish.api.exception;
 public class InvalidTokenException extends RuntimeException {
 
     public InvalidTokenException() {
-        super("El token no es válido o no pertenece a ningún jugador");
+        super("El token no es válido; inicia sesión de nuevo en el juego");
     }
 }

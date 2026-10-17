@@ -6,12 +6,14 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fatfish.api.dto.juego.MatchResponse;
 import com.fatfish.api.dto.juego.SessionResponse;
+import com.fatfish.api.exception.InvalidCredentialsException;
 import com.fatfish.api.exception.InvalidTokenException;
 import com.fatfish.api.service.GameService;
 import com.fatfish.api.service.GameService.MatchResult;
@@ -45,19 +47,37 @@ class GameControllerTest {
         when(gameService.register(any())).thenReturn(new SessionResponse("5", "token-del-juego"));
 
         mockMvc.perform(post("/api/juego/registro").contentType(MediaType.APPLICATION_JSON)
-                        .content("{ \"alias\": \"andrik\" }"))
+                        .content("{ \"alias\": \"andrik\", \"contrasena\": \"pez-gordo-2026\" }"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.jugadorId").value("5"))
                 .andExpect(jsonPath("$.token").value("token-del-juego"));
     }
 
     @Test
-    void rejectsAShortAlias() throws Exception {
+    void rejectsAShortAliasAndPassword() throws Exception {
         mockMvc.perform(post("/api/juego/registro").contentType(MediaType.APPLICATION_JSON)
-                        .content("{ \"alias\": \"ab\" }"))
+                        .content("{ \"alias\": \"ab\", \"contrasena\": \"1234\" }"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors", hasItem("alias debe tener entre 3 y 24 caracteres")));
+                .andExpect(jsonPath("$.errors", hasItem("alias debe tener entre 3 y 24 caracteres")))
+                .andExpect(jsonPath("$.errors", hasItem("contrasena debe tener entre 8 y 72 caracteres")));
         verifyNoInteractions(gameService);
+    }
+
+    @Test
+    void returnsUnauthorizedForWrongCredentials() throws Exception {
+        when(gameService.login(any())).thenThrow(new InvalidCredentialsException());
+
+        mockMvc.perform(post("/api/juego/sesion").contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"jugadorId\": 5, \"contrasena\": \"equivocada\" }"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.detail").value("El id del jugador o la contraseña no son correctos"));
+    }
+
+    @Test
+    void changesThePassword() throws Exception {
+        mockMvc.perform(put("/api/juego/contrasena").header("Authorization", AUTHORIZATION)
+                        .contentType(MediaType.APPLICATION_JSON).content("{ \"contrasenaNueva\": \"nueva-clave-123\" }"))
+                .andExpect(status().isNoContent());
     }
 
     @Test

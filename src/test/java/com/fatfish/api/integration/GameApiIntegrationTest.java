@@ -3,6 +3,7 @@ package com.fatfish.api.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -25,6 +26,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("test")
 class GameApiIntegrationTest {
 
+    private static final String PASSWORD = "pez-gordo-2026";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -37,12 +40,14 @@ class GameApiIntegrationTest {
     }
 
     @Test
-    void registersAPlayerAndStoresOnlyTheHashOfItsToken() throws Exception {
+    void registersAPlayerAndStoresOnlyTheHashesOfItsPasswordAndToken() throws Exception {
         String token = register("andrik");
 
         assertThat(token).hasSizeGreaterThanOrEqualTo(43);
-        Map<String, Object> player = jdbc.queryForMap("SELECT alias, token_hash FROM jugador WHERE id = 1");
+        Map<String, Object> player = jdbc.queryForMap(
+                "SELECT alias, contrasena_hash, token_hash FROM jugador WHERE id = 1");
         assertThat(player.get("alias")).isEqualTo("andrik");
+        assertThat((String) player.get("contrasena_hash")).startsWith("$2").doesNotContain(PASSWORD);
         assertThat((String) player.get("token_hash")).hasSize(64).isNotEqualTo(token);
         assertThat(jdbc.queryForObject("SELECT partidas_totales FROM estadistica_jugador WHERE jugador_id = 1",
                 Integer.class)).isZero();
@@ -108,13 +113,49 @@ class GameApiIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM partida", Integer.class)).isZero();
     }
 
+    @Test
+    void logsInWithANewTokenAndChangesThePasswordWithTheToken() throws Exception {
+        String firstToken = register("andrik");
+
+        mockMvc.perform(post("/api/juego/sesion").contentType(MediaType.APPLICATION_JSON)
+                        .content(login(1, "otra-contrasena")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.detail").value("El id del jugador o la contraseña no son correctos"));
+        mockMvc.perform(post("/api/juego/sesion").contentType(MediaType.APPLICATION_JSON).content(login(99, PASSWORD)))
+                .andExpect(status().isUnauthorized());
+        String body = mockMvc.perform(post("/api/juego/sesion").contentType(MediaType.APPLICATION_JSON)
+                        .content(login(1, PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jugadorId").value("1"))
+                .andReturn().getResponse().getContentAsString();
+        String secondToken = JsonPath.read(body, "$.token");
+
+        // The previous token stops working
+        mockMvc.perform(put("/api/juego/contrasena").header("Authorization", "Bearer " + firstToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{ \"contrasenaNueva\": \"nueva-clave-123\" }"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(put("/api/juego/contrasena").header("Authorization", "Bearer " + secondToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{ \"contrasenaNueva\": \"nueva-clave-123\" }"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/juego/sesion").contentType(MediaType.APPLICATION_JSON).content(login(1, PASSWORD)))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/juego/sesion").contentType(MediaType.APPLICATION_JSON)
+                        .content(login(1, "nueva-clave-123")))
+                .andExpect(status().isOk());
+    }
+
     private String register(String alias) throws Exception {
         String body = mockMvc.perform(post("/api/juego/registro").contentType(MediaType.APPLICATION_JSON)
-                        .content("{ \"alias\": \"" + alias + "\" }"))
+                        .content("{ \"alias\": \"" + alias + "\", \"contrasena\": \"" + PASSWORD + "\" }"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.jugadorId").value("1"))
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.token");
+    }
+
+    private static String login(long playerId, String password) {
+        return "{ \"jugadorId\": " + playerId + ", \"contrasena\": \"" + password + "\" }";
     }
 
     private static String match(int localNumber, String result, int score, String jokers) {
