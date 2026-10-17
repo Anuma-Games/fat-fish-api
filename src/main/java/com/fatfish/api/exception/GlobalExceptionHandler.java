@@ -5,8 +5,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSourceResolvable;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -23,6 +25,23 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(PlayerNotFoundException.class)
     ProblemDetail handlePlayerNotFound(PlayerNotFoundException ex) {
         return problem(HttpStatus.NOT_FOUND, "Jugador no encontrado", ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidTokenException.class)
+    ResponseEntity<ProblemDetail> handleInvalidToken(InvalidTokenException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
+                .body(problem(HttpStatus.UNAUTHORIZED, "No autorizado", ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    ProblemDetail handleInvalidCredentials(InvalidCredentialsException ex) {
+        return problem(HttpStatus.UNAUTHORIZED, "No autorizado", ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidMatchException.class)
+    ProblemDetail handleInvalidMatch(InvalidMatchException ex) {
+        return problem(HttpStatus.BAD_REQUEST, "Partida inválida", ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -51,7 +70,7 @@ public class GlobalExceptionHandler {
     ProblemDetail handleDataIntegrity(DataIntegrityViolationException ex) {
         log.warn("Data integrity violation while saving", ex);
         return problem(HttpStatus.CONFLICT, "Conflicto al guardar",
-                "Los datos entran en conflicto con información existente; intenta enviar el lote de nuevo");
+                "Los datos entran en conflicto con información existente; intenta enviarlos de nuevo");
     }
 
     private static ProblemDetail validationProblem(List<? extends MessageSourceResolvable> errors) {
