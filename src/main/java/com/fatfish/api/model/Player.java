@@ -2,46 +2,63 @@ package com.fatfish.api.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
-import java.util.UUID;
 
+/** Player registered from the game (table "jugador"). Only the SHA-256 of its token is stored. */
 @Entity
-@Table(name = "players")
-public class Player extends AssignedIdEntity {
+@Table(name = "jugador")
+public class Player {
 
     @Id
-    private UUID id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-    @Column(name = "display_name", length = 60)
-    private String displayName;
+    @Column(name = "alias", nullable = false, length = 24)
+    private String alias;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "token_hash", nullable = false, unique = true, length = 64)
+    private String tokenHash;
+
+    @Column(name = "creado_en", nullable = false)
     private Instant createdAt;
+
+    @Column(name = "ultima_actividad")
+    private Instant lastActivity;
 
     protected Player() {
     }
 
-    public Player(UUID id) {
-        this.id = id;
+    public Player(String alias, String tokenHash) {
+        this.alias = alias;
+        this.tokenHash = tokenHash;
         this.createdAt = Instant.now();
     }
 
-    @Override
-    public UUID getId() {
+    public Long getId() {
         return id;
     }
 
-    public String getDisplayName() {
-        return displayName;
+    public String getAlias() {
+        return alias;
     }
 
-    public void setDisplayName(String displayName) {
-        this.displayName = displayName;
+    public String getTokenHash() {
+        return tokenHash;
     }
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Instant getLastActivity() {
+        return lastActivity;
+    }
+
+    public void setLastActivity(Instant lastActivity) {
+        this.lastActivity = lastActivity;
     }
 }

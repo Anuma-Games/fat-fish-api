@@ -37,7 +37,7 @@ public class PwaController {
 
     @GetMapping("/perfil")
     @Operation(summary = "Perfil del jugador",
-            description = "Alias, fechas y las seis estadísticas del expediente, calculadas con todas sus partidas.")
+            description = "Alias, fechas y las seis estadísticas del expediente, que se actualizan con cada partida.")
     public ProfileDto getProfile(
             @RequestParam @Min(value = 1, message = "id debe ser un número de jugador válido") long id) {
         return pwaService.getProfile(id);
