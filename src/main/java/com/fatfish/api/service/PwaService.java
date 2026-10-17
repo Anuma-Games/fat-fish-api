@@ -7,13 +7,14 @@ import com.fatfish.api.dto.pwa.ProfileDto;
 import com.fatfish.api.dto.pwa.PwaPage;
 import com.fatfish.api.exception.PlayerNotFoundException;
 import com.fatfish.api.model.Feedback;
-import com.fatfish.api.model.PwaMatch;
-import com.fatfish.api.model.PwaPlayer;
+import com.fatfish.api.model.Match;
+import com.fatfish.api.model.Player;
+import com.fatfish.api.model.PlayerStatistics;
 import com.fatfish.api.repository.FeedbackRepository;
-import com.fatfish.api.repository.PwaMatchRepository;
-import com.fatfish.api.repository.PwaPlayerRepository;
+import com.fatfish.api.repository.MatchRepository;
+import com.fatfish.api.repository.PlayerRepository;
+import com.fatfish.api.repository.PlayerStatisticsRepository;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
@@ -21,55 +22,41 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Read and insert operations used by the PWA ({@code /api/pwa}), over the tables jugador, partida and retroalimentacion. */
+/** Read and insert operations used by the PWA ({@code /api/pwa}), over the tables jugador, estadistica_jugador, partida and retroalimentacion. */
 @Service
 public class PwaService {
 
-    private final PwaPlayerRepository playerRepository;
-    private final PwaMatchRepository matchRepository;
+    private final PlayerRepository playerRepository;
+    private final PlayerStatisticsRepository statisticsRepository;
+    private final MatchRepository matchRepository;
     private final FeedbackRepository feedbackRepository;
 
-    public PwaService(PwaPlayerRepository playerRepository, PwaMatchRepository matchRepository,
-            FeedbackRepository feedbackRepository) {
+    public PwaService(PlayerRepository playerRepository, PlayerStatisticsRepository statisticsRepository,
+            MatchRepository matchRepository, FeedbackRepository feedbackRepository) {
         this.playerRepository = playerRepository;
+        this.statisticsRepository = statisticsRepository;
         this.matchRepository = matchRepository;
         this.feedbackRepository = feedbackRepository;
     }
 
-    /** Profile of a player with the six statistics computed from all its matches. */
+    /** Profile of a player with the six statistics of the record, read from estadistica_jugador. */
     @Transactional(readOnly = true)
     public ProfileDto getProfile(long playerId) {
-        PwaPlayer player = findPlayer(playerId);
-        List<PwaMatch> matches = matchRepository.findByPlayerIdOrderByCreatedAtAsc(playerId);
-        long won = 0;
-        long invested = 0;
-        long lost = 0;
-        long seconds = 0;
-        int streak = 0;
-        int maxStreak = 0;
-        Instant lastActivity = null;
-        for (PwaMatch match : matches) {
-            invested += match.getMoneyInvested();
-            lost += match.getMoneyLost();
-            seconds += match.getDurationSeconds();
-            // Losing streak: consecutive defeats in chronological order (an abandoned match does not break it)
-            switch (match.getResult()) {
-                case "VICTORIA" -> {
-                    won++;
-                    streak = 0;
-                }
-                case "DERROTA" -> maxStreak = Math.max(maxStreak, ++streak);
-                default -> {
-                }
-            }
-            lastActivity = match.getCreatedAt();
-        }
+        Player player = findPlayer(playerId);
+        PlayerStatistics statistics = statisticsRepository.findById(playerId)
+                .orElseGet(() -> new PlayerStatistics(playerId));
         return new ProfileDto(
                 String.valueOf(player.getId()),
                 player.getAlias(),
                 player.getCreatedAt(),
-                lastActivity,
-                new ProfileDto.Statistics(matches.size(), won, invested, lost, maxStreak, seconds),
+                player.getLastActivity(),
+                new ProfileDto.Statistics(
+                        statistics.getTotalMatches(),
+                        statistics.getMatchesWon(),
+                        statistics.getMoneyInvested(),
+                        statistics.getMoneyLost(),
+                        statistics.getLongestLosingStreak(),
+                        statistics.getSecondsPlayed()),
                 Instant.now());
     }
 
@@ -100,11 +87,11 @@ public class PwaService {
     public record FeedbackResult(FeedbackResponse feedback, boolean created) {
     }
 
-    private PwaPlayer findPlayer(long playerId) {
+    private Player findPlayer(long playerId) {
         return playerRepository.findById(playerId).orElseThrow(() -> new PlayerNotFoundException(playerId));
     }
 
-    static MatchDto toMatch(PwaMatch match) {
+    static MatchDto toMatch(Match match) {
         return new MatchDto(
                 String.valueOf(match.getId()),
                 match.getResult(),
