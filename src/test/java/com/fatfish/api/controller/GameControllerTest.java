@@ -18,6 +18,7 @@ import com.fatfish.api.exception.InvalidTokenException;
 import com.fatfish.api.service.GameService;
 import com.fatfish.api.service.GameService.MatchResult;
 import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -30,11 +31,13 @@ class GameControllerTest {
 
     private static final String AUTHORIZATION = "Bearer abc";
     private static final String VALID_MATCH = """
-            { "numeroLocal": 3, "resultado": "DERROTA", "rondaAlcanzada": 4, "puntaje": 281,
+            { "claveIdempotencia": "3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13", "terminadaEn": "2026-10-16T17:40:00Z",
+              "resultado": "DERROTA", "rondaAlcanzada": 4, "puntaje": 281,
               "dineroInvertido": 2350, "dineroGanado": 1800, "dineroPerdido": 1450, "vecesTodoONada": 1,
               "empenos": 0, "prestamos": 1, "duracionSeg": 1301 }
             """;
-    private static final MatchResponse STORED = new MatchResponse("12", 3, Instant.parse("2026-10-16T18:00:00Z"));
+    private static final MatchResponse STORED = new MatchResponse("12",
+            UUID.fromString("3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13"), Instant.parse("2026-10-16T18:00:00Z"));
 
     @Autowired
     private MockMvc mockMvc;
@@ -88,11 +91,11 @@ class GameControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_MATCH))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/juego/partidas/12"))
-                .andExpect(jsonPath("$.numeroLocal").value(3));
+                .andExpect(jsonPath("$.claveIdempotencia").value("3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13"));
     }
 
     @Test
-    void returnsTheStoredMatchForARepeatedLocalNumber() throws Exception {
+    void returnsTheStoredMatchForARepeatedKey() throws Exception {
         when(gameService.recordMatch(eq(AUTHORIZATION), any())).thenReturn(new MatchResult(STORED, false));
 
         mockMvc.perform(post("/api/juego/partidas").header("Authorization", AUTHORIZATION)
@@ -115,12 +118,12 @@ class GameControllerTest {
         mockMvc.perform(post("/api/juego/partidas").header("Authorization", AUTHORIZATION)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "numeroLocal": 0, "resultado": "EMPATE", "rondaAlcanzada": 10, "puntaje": -1,
+                                { "resultado": "EMPATE", "rondaAlcanzada": 10, "puntaje": -1,
                                   "dineroInvertido": 0, "dineroGanado": 0, "dineroPerdido": 0, "vecesTodoONada": 0,
                                   "empenos": 0, "prestamos": 0, "duracionSeg": 0 }
                                 """))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors", hasItem("numeroLocal debe ser mayor o igual a 1")))
+                .andExpect(jsonPath("$.errors", hasItem("claveIdempotencia es obligatoria")))
                 .andExpect(jsonPath("$.errors", hasItem("resultado debe ser VICTORIA, DERROTA o ABANDONO")))
                 .andExpect(jsonPath("$.errors", hasItem("rondaAlcanzada debe estar entre 1 y 9")));
         verifyNoInteractions(gameService);

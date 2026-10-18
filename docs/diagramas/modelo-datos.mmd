@@ -31,7 +31,8 @@ erDiagram
     partida {
         bigint id PK
         bigint jugador_id FK "NN"
-        int numero_local "NN, lo genera el juego, único por jugador"
+        uuid clave_idempotencia UK "NN, la genera el juego"
+        timestamptz terminada_en "NN, cuándo se jugó"
         varchar resultado "VICTORIA, DERROTA, ABANDONO, NN"
         int ronda_alcanzada "NN, 1 a 9"
         int puntaje "NN"
@@ -42,7 +43,7 @@ erDiagram
         int empenos "NN"
         int prestamos "NN"
         int duracion_seg "NN"
-        timestamptz creada_en "NN"
+        timestamptz creada_en "NN, cuándo llegó a la API"
     }
 
     comodin {
