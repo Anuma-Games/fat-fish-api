@@ -1,0 +1,78 @@
+%% Simbología: PK = llave primaria, FK = llave foránea, UK = valor único,
+%% NN = obligatorio (not null), nulo = opcional, varchar(n) = texto de hasta n caracteres.
+erDiagram
+    jugador ||--|| estadistica_jugador : "tiene (1:1)"
+    jugador ||--o{ partida : "registra (1:N)"
+    partida ||--o{ partida_comodin : "incluye (1:N)"
+    comodin ||--o{ partida_comodin : "aparece en (1:N)"
+
+    jugador {
+        bigint id PK "generado por el backend, único"
+        varchar alias "varchar(24), NN, se puede repetir"
+        varchar contrasena_hash "varchar(60), NN, BCrypt"
+        varchar token_hash UK "varchar(64), NN, SHA-256 del token"
+        timestamptz creado_en "NN"
+        timestamptz ultima_actividad "nulo"
+    }
+
+    estadistica_jugador {
+        bigint jugador_id PK, FK
+        int puntaje_maximo "NN, mejor puntaje en una victoria"
+        timestamptz puntaje_maximo_en "nulo, desempate del ranking"
+        int partidas_totales "NN"
+        int partidas_ganadas "NN"
+        int dinero_invertido "NN"
+        int dinero_ganado "NN"
+        int dinero_perdido "NN"
+        int racha_derrotas_max "NN"
+        int tiempo_jugado_seg "NN"
+    }
+
+    partida {
+        bigint id PK
+        bigint jugador_id FK "NN"
+        int numero_local "NN, lo genera el juego, único por jugador"
+        varchar resultado "VICTORIA, DERROTA, ABANDONO, NN"
+        int ronda_alcanzada "NN, 1 a 9"
+        int puntaje "NN"
+        int dinero_invertido "NN"
+        int dinero_ganado "NN"
+        int dinero_perdido "NN"
+        int veces_todo_o_nada "NN"
+        int empenos "NN"
+        int prestamos "NN"
+        int duracion_seg "NN"
+        timestamptz creada_en "NN"
+    }
+
+    comodin {
+        smallint id PK
+        varchar nombre "varchar(40), NN, único"
+        varchar descripcion "varchar(200), NN"
+    }
+
+    partida_comodin {
+        bigint partida_id PK, FK
+        smallint comodin_id PK, FK
+        int veces_comprado "NN"
+        int veces_usado "NN"
+    }
+
+    retroalimentacion {
+        bigint id PK
+        uuid clave_idempotencia UK "NN, la genera la PWA"
+        varchar categoria "ERROR, SUGERENCIA, OTRO, NN"
+        varchar componente "JUEGO, PWA, OTRO, NN"
+        varchar mensaje "varchar(1000), NN, mínimo 10 caracteres"
+        timestamptz creada_en "NN"
+    }
+
+    encuesta {
+        bigint id PK
+        uuid clave_idempotencia UK "NN, la genera la PWA"
+        smallint percepcion_riesgo "NN, 1 a 5"
+        smallint cambio_opinion "NN, 1 a 5"
+        smallint claridad_mensaje "NN, 1 a 5"
+        varchar comentario "varchar(500), nulo"
+        timestamptz enviada_en "NN"
+    }

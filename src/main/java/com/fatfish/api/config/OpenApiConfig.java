@@ -13,7 +13,7 @@ public class OpenApiConfig {
         return new OpenAPI().info(new Info()
                 .title("Fat Fish API")
                 .version("v1")
-                .description("API del videojuego Fat Fish (IDGS101N, UTCH): sincronización de partidas, "
-                        + "historial y estadísticas por jugador."));
+                .description("API del videojuego Fat Fish (IDGS101N, UTCH): registro de jugadores y partidas "
+                        + "desde el juego, y consultas e inserciones de la PWA."));
     }
 }

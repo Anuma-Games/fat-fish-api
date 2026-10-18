@@ -31,7 +31,7 @@ class PwaApiIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
-        jdbc.execute("TRUNCATE retroalimentacion, partida, jugador RESTART IDENTITY");
+        jdbc.execute("TRUNCATE retroalimentacion, partida_comodin, partida, estadistica_jugador, jugador RESTART IDENTITY");
     }
 
     @Test
@@ -57,12 +57,19 @@ class PwaApiIntegrationTest {
 
     @Test
     void returnsTheProfileAndHistoryOfAPlayer() throws Exception {
-        jdbc.update("INSERT INTO jugador (alias) VALUES ('jesus')");
+        jdbc.update("INSERT INTO jugador (alias, contrasena_hash, token_hash, ultima_actividad) VALUES ('jesus', 'bcrypt-1', 'hash-1', '2026-10-02 10:00Z')");
         jdbc.update("""
-                INSERT INTO partida (jugador_id, resultado, ronda_alcanzada, puntaje, dinero_invertido, dinero_ganado,
-                    dinero_perdido, duracion_seg, creada_en) VALUES
-                (1, 'DERROTA', 4, 281, 2350, 1800, 1450, 1200, '2026-10-01 10:00Z'),
-                (1, 'VICTORIA', 9, 1510, 9100, 11200, 1900, 1800, '2026-10-02 10:00Z')
+                INSERT INTO estadistica_jugador (jugador_id, puntaje_maximo, puntaje_maximo_en, partidas_totales,
+                    partidas_ganadas, dinero_invertido, dinero_ganado, dinero_perdido, racha_derrotas_max,
+                    tiempo_jugado_seg)
+                VALUES (1, 1510, '2026-10-02 10:00Z', 2, 1, 11450, 13000, 3350, 1, 3000)
+                """);
+        jdbc.update("""
+                INSERT INTO partida (jugador_id, numero_local, resultado, ronda_alcanzada, puntaje, dinero_invertido,
+                    dinero_ganado, dinero_perdido, veces_todo_o_nada, empenos, prestamos, duracion_seg, creada_en)
+                VALUES
+                (1, 1, 'DERROTA', 4, 281, 2350, 1800, 1450, 0, 0, 0, 1200, '2026-10-01 10:00Z'),
+                (1, 2, 'VICTORIA', 9, 1510, 9100, 11200, 1900, 1, 0, 0, 1800, '2026-10-02 10:00Z')
                 """);
 
         mockMvc.perform(get("/api/pwa/partidas").param("id", "1"))

@@ -4,13 +4,13 @@
 
 Prototipo del backend del videojuego **Fat Fish** (proyecto integrador, grupo IDGS101N, UTCH).
 
-El juego guarda cada partida en el equipo del jugador (local first) y la sincroniza con esta API
-cuando hay conexión. La API recibe lotes de partidas de forma idempotente y expone el historial y
-las estadísticas de cada jugador para la PWA y la app móvil.
+El juego registra al jugador, guarda cada partida en su equipo (local first) y la envía a esta API
+cuando hay conexión. La API guarda cada partida una sola vez, actualiza las estadísticas del jugador
+y expone su perfil e historial para la PWA y la app móvil.
 
 ## Tecnologías
 
-- Java 21, Spring Boot 4 (Web MVC, Data JPA, Validation, Actuator)
+- Java 21, Spring Boot 4 (Web MVC, Data JPA, Validation, Actuator) y `spring-security-crypto` (BCrypt)
 - PostgreSQL 17 (local con Docker Compose) y migraciones con Flyway
 - OpenAPI / Swagger UI (springdoc-openapi)
 - JUnit 5, Mockito, MockMvc y pruebas de integración contra PostgreSQL real
@@ -20,14 +20,15 @@ las estadísticas de cada jugador para la PWA y la app móvil.
 
 ```
 src/main/java/com/fatfish/api
-├── controller   # Endpoints REST (/api/v1)
-├── service      # Reglas de negocio: validación, idempotencia, estadísticas
+├── controller   # Endpoints REST (/api/juego y /api/pwa)
+├── service      # Reglas de negocio: token, idempotencia, estadísticas
 ├── repository   # Spring Data JPA
 ├── model        # Entidades JPA
-├── dto          # Contrato JSON (RunRecord, respuestas)
+├── dto          # Contrato JSON del juego (dto/juego) y de la PWA (dto/pwa)
 ├── exception    # Manejo de errores (Problem Details, mensajes en español)
 └── config       # Configuración de OpenAPI
-src/main/resources/db/migration   # Migraciones de Flyway (V1__initial_schema.sql)
+src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql)
+docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
 ```
@@ -78,6 +79,10 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish ./mvnw spring-boot:run
 
 Flyway aplica las migraciones al arrancar.
 
+> **Si tu base local se creó antes de FF-51** (esquema con `players` y `runs`), la API no arranca porque la migración
+> `V1` cambió. Borra y vuelve a crear las bases: con Docker, `docker compose down -v` y `docker compose up -d`; con
+> PostgreSQL instalado, `dropdb fatfish` y `createdb -O fatfish fatfish` (igual con `fatfish_test`).
+
 **Perfil `lab` (laboratorio de pruebas de la PWA):** agrega una línea de log por petición (método, ruta, código,
 tiempo, tamaños y memoria), el SQL con sus parámetros y las métricas JDBC de cada transacción, en consola y en
 `logs/fat-fish-api-lab.log`. Los pasos completos del laboratorio están en el repositorio
@@ -86,6 +91,23 @@ tiempo, tamaños y memoria), el SQL con sus parámetros y las métricas JDBC de 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=lab
 ```
+
+**Perfil `gcp` (base de pruebas en Google Cloud SQL):** se conecta con SSL a la base de la nube. Los datos de
+conexión van en un archivo `.env` en la raíz del proyecto, que no se sube al repositorio (está en `.gitignore`):
+
+```properties
+DB_HOST=<IP pública de Cloud SQL>
+DB_NAME=fatfish
+DB_USER=<usuario>
+DB_PASSWORD=<contraseña>
+```
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=gcp
+```
+
+Por ahora el perfil solo prueba la conexión: Flyway y la validación del esquema están apagados, así que no crea
+tablas en la nube. `/actuator/health` debe mostrar la base como `UP`.
 
 También puedes levantar la API y la base de datos en contenedores:
 
@@ -118,9 +140,8 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish_test ./mvnw test
 
 | Tipo | Clases | Qué cubren |
 |---|---|---|
-| Unitarias (Mockito) | `RunServiceTest`, `PlayerServiceTest` | Validaciones, idempotencia, cálculo de estadísticas |
-| Controller (MockMvc) | `RunControllerTest`, `PlayerControllerTest` | Códigos HTTP, JSON y mensajes de error |
-| Integración (PostgreSQL) | `RunApiIntegrationTest` | Flujo completo, mismo lote enviado dos veces sin duplicados, JSONB, paginación |
+| Controller (MockMvc) | `GameControllerTest`, `PwaControllerTest` | Códigos HTTP, JSON, validaciones y mensajes de error |
+| Integración (PostgreSQL) | `GameApiIntegrationTest`, `PwaApiIntegrationTest` | Registro y token, partida reenviada sin duplicados, estadísticas, comodines, perfil, historial y retroalimentación |
 
 Para generar el `.jar` (queda en `target/fat-fish-api.jar`):
 
@@ -131,63 +152,75 @@ java -jar target/fat-fish-api.jar
 
 ## Endpoints
 
-Prefijo: `/api/v1`. Los errores siguen el formato Problem Details (RFC 9457) con mensajes en español.
+Los errores siguen el formato Problem Details (RFC 9457) con mensajes en español. Los `id` viajan como texto.
 
-### `POST /api/v1/runs`
+### `POST /api/juego/registro`
 
-Recibe un lote (máximo 100) de partidas. Es **idempotente por `runId`**: reenviar un lote no duplica nada.
-El lote va dentro de un objeto (`runs`) porque `JsonUtility` de Unity no serializa arreglos en la raíz.
+Crea el jugador y sus estadísticas en cero. `alias`: de 3 a 24 caracteres (se puede repetir);
+`contrasena`: de 8 a 72 caracteres, se guarda con BCrypt (`jugador.contrasena_hash`).
+
+```json
+{ "alias": "andrik", "contrasena": "pez-gordo-2026" }
+```
+
+Responde `201`:
+
+```json
+{ "jugadorId": "5", "token": "q3Zt…" }
+```
+
+El token solo se entrega aquí. El juego lo guarda en el dispositivo y lo envía en la cabecera
+`Authorization: Bearer <token>`; la base de datos solo guarda su SHA-256 (`jugador.token_hash`).
+
+### `POST /api/juego/sesion`
+
+Para usar la cuenta en otro dispositivo (o si el juego perdió el token). Con el id y la contraseña responde `200`
+con un token nuevo, en el mismo formato que el registro; **el token anterior deja de funcionar**. Si el id no existe
+o la contraseña es incorrecta responde `401` con el mismo mensaje, para no revelar qué ids existen.
+
+```json
+{ "jugadorId": 5, "contrasena": "pez-gordo-2026" }
+```
+
+### `PUT /api/juego/contrasena`
+
+Requiere `Authorization: Bearer <token>`. Cambia la contraseña sin pedir la anterior: el token demuestra que es el
+dueño de la cuenta, así que el jugador puede recuperarla desde el dispositivo donde juega. Responde `204`.
+
+```json
+{ "contrasenaNueva": "otra-clave-segura" }
+```
+
+Si el jugador pierde el dispositivo y también olvidó la contraseña, la cuenta no se puede recuperar.
+
+### `POST /api/juego/partidas`
+
+Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe responde `401`.
 
 ```json
 {
-  "runs": [
-    {
-      "schemaVersion": 1, "runId": "7d3f2a9e-1c4b-4f6e-9a8d-2b5c6e7f8a90",
-      "installationId": "0e8f7c6d-5b4a-4c3d-8e2f-1a0b9c8d7e6f", "playerId": null,
-      "gameVersion": "0.3.0", "startedAt": "2026-10-05T18:20:11Z", "endedAt": "2026-10-05T18:41:52Z",
-      "result": "defeat", "levelReached": 2, "roundsCleared": 4, "bossesDefeated": 1,
-      "maxSpinScore": 144, "totalSpins": 17, "totalBet": 2350, "totalWon": 1800, "totalLost": 1450,
-      "allInCount": 1, "pawnedAssets": ["car"], "loansTaken": 1, "loanTotal": 500,
-      "mostDesperateSpin": { "level": 2, "round": 3, "spin": 4, "bet": 900, "moneyBefore": 900, "allIn": true },
-      "itemsBought": ["fresh_paint", "glass_chip"]
-    }
+  "numeroLocal": 3, "resultado": "DERROTA", "rondaAlcanzada": 4, "puntaje": 281,
+  "dineroInvertido": 2350, "dineroGanado": 1800, "dineroPerdido": 1450,
+  "vecesTodoONada": 1, "empenos": 0, "prestamos": 1, "duracionSeg": 1301,
+  "comodines": [
+    { "comodinId": 1, "vecesComprado": 2, "vecesUsado": 5 },
+    { "comodinId": 3, "vecesComprado": 1, "vecesUsado": 0 }
   ]
 }
 ```
 
-Respuesta:
-
-```json
-{
-  "accepted": ["7d3f2a9e-1c4b-4f6e-9a8d-2b5c6e7f8a90"],
-  "duplicates": [],
-  "rejected": [
-    { "index": 1, "runId": "…", "reasons": ["levelReached debe estar entre 1 y 3"] }
-  ]
-}
-```
-
-Validaciones por partida: `levelReached` entre 1 y 3, `totalSpins` y montos no negativos,
-`endedAt` posterior a `startedAt`, `result` en `defeat`, `demo_victory` o `abandoned`, `schemaVersion` = 1.
-Una partida inválida no rechaza el lote completo.
-
-### `GET /api/v1/players/{id}/runs?page=0&size=20`
-
-Historial paginado (la página empieza en 0, `size` máximo 100), de la partida más reciente a la más antigua.
-
-### `GET /api/v1/players/{id}/stats`
-
-```json
-{
-  "playerId": "…", "runsPlayed": 2, "maxLevelReached": 3, "maxSpinScore": 210,
-  "totalBet": 6350, "totalWon": 7000, "totalLost": 2350
-}
-```
+- `numeroLocal`: contador de partidas que lleva el juego (1, 2, 3…). Es único por jugador: si el juego reenvía
+  una partida (por ejemplo, porque se perdió la respuesta), la API responde `200` con la partida guardada y no
+  inserta otra. La primera vez responde `201` con `{ "id": "12", "numeroLocal": 3, "creadaEn": "…" }`.
+- `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: de 1 a 9; montos y contadores no negativos.
+- `comodines` es opcional. `comodinId` es el `id` de la tabla `comodin` (1 a 4) y no se puede repetir.
+- Al guardar la partida, la API recalcula `estadistica_jugador` con todas las partidas del jugador en el orden de
+  `numeroLocal`, así la racha de derrotas es correcta aunque una partida jugada sin conexión llegue tarde.
 
 ### `GET /api/pwa/perfil?id=1`
 
 Alias, fechas y las seis estadísticas del expediente (partidas, ganadas, invertido, perdido, racha máxima de
-derrotas y tiempo jugado), calculadas con todas las partidas del jugador.
+derrotas y tiempo jugado), leídas de `estadistica_jugador`.
 
 ### `GET /api/pwa/partidas?id=1&pagina=0&tamano=10`
 
@@ -198,7 +231,7 @@ se generó la respuesta, para mostrar la antigüedad de los datos cuando la PWA 
 ```json
 {
   "contenido": [
-    { "id": "b0000000-…-0008", "resultado": "VICTORIA", "rondaAlcanzada": 9, "puntaje": 1510,
+    { "id": "8", "resultado": "VICTORIA", "rondaAlcanzada": 9, "puntaje": 1510,
       "dineroInvertido": 9100, "dineroGanado": 11200, "dineroPerdido": 1900, "duracionSeg": 2645,
       "creadaEn": "2026-10-13T22:00:00Z" }
   ],
@@ -217,20 +250,23 @@ cada reintento; si la clave ya existe, la API responde `200` con el registro gua
 
 ## Modelo de datos
 
+Una sola migración (`V1__esquema_inicial.sql`) crea todas las tablas y carga el catálogo de comodines.
+
+![Modelo de datos](docs/diagramas/modelo-datos.png)
+
+<sub>Código del diagrama: [`docs/diagramas/modelo-datos.mmd`](docs/diagramas/modelo-datos.mmd). La simbología y la
+descripción de cada tabla están en el [README de la PWA](https://github.com/Anuma-Games/fat-fish-pwa#3-modelo-de-datos);
+si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
+
 | Tabla | Descripción |
 |---|---|
-| `players` | Jugadores |
-| `installations` | Copias del juego; `player_id` es nulo hasta vincularla a un jugador |
-| `runs` | Partidas; `run_id` (UUID generado por el juego) es la llave primaria. `pawned_assets` y `most_desperate_spin` son JSONB |
-| `run_items` | Objetos comprados en cada partida, en orden |
-| `jugador`, `partida` | Tablas de la PWA con `id` numérico (migración `V2`); el laboratorio las llena con scripts SQL |
-| `retroalimentacion` | Retroalimentación enviada desde la PWA; `clave_idempotencia` es única (migración `V2`) |
-
-**Decisiones provisionales del prototipo** (hasta tener autenticación y vinculación de instalaciones):
-
-- Una instalación nueva se registra automáticamente al recibir su primera partida.
-- Si una partida trae un `playerId` que no existe, el jugador se registra automáticamente.
-- Si la partida no trae `playerId` pero la instalación ya está vinculada, se asigna al jugador de la instalación.
+| `jugador` | Jugadores registrados desde el juego; `contrasena_hash` (BCrypt) y `token_hash` (SHA-256 del token) nunca salen en la API |
+| `estadistica_jugador` | Totales de cada jugador (1:1 con `jugador`); el ranking se ordena por `puntaje_maximo` y desempata con `puntaje_maximo_en` |
+| `partida` | Partidas terminadas; `(jugador_id, numero_local)` es único |
+| `comodin` | Catálogo de los 4 comodines del MVP |
+| `partida_comodin` | Veces que se compró y usó cada comodín en una partida |
+| `retroalimentacion` | Retroalimentación anónima de la PWA; `clave_idempotencia` es única |
+| `encuesta` | Encuesta anónima de la PWA; `clave_idempotencia` es única (sin endpoint todavía) |
 
 ## Integración continua
 
