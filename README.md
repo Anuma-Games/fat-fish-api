@@ -106,8 +106,9 @@ DB_PASSWORD=<contraseña>
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=gcp
 ```
 
-Por ahora el perfil solo prueba la conexión: Flyway y la validación del esquema están apagados, así que no crea
-tablas en la nube. `/actuator/health` debe mostrar la base como `UP`.
+Al arrancar, Flyway aplica en la nube las migraciones pendientes (igual que en local) y Hibernate valida el esquema.
+`/actuator/health` debe mostrar la base como `UP`. Como las migraciones que ya están en `main` no se editan, la base de
+la nube nunca se borra: cada cambio de esquema llega con una migración nueva.
 
 También puedes levantar la API y la base de datos en contenedores:
 
