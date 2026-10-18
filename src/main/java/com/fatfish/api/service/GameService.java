@@ -84,19 +84,23 @@ public class GameService {
     }
 
     /**
-     * Stores a match once per local number of the player and recalculates its statistics. A retry
-     * with the same local number returns the stored match instead of inserting it again.
+     * Stores a match once per idempotency key and recalculates the statistics of the player. A retry
+     * with the same key returns the stored match instead of inserting it again.
      */
     @Transactional
     public MatchResult recordMatch(String authorization, MatchRequest request) {
         Player player = authenticate(authorization);
-        Optional<Match> existing = matchRepository.findByPlayerIdAndLocalNumber(player.getId(), request.numeroLocal());
+        Optional<Match> existing = matchRepository.findByIdempotencyKey(request.claveIdempotencia());
         if (existing.isPresent()) {
+            if (!existing.get().getPlayerId().equals(player.getId())) {
+                throw new InvalidMatchException("La claveIdempotencia ya pertenece a la partida de otro jugador");
+            }
             return new MatchResult(toResponse(existing.get()), false);
         }
         Match match = matchRepository.save(new Match(
                 player.getId(),
-                request.numeroLocal(),
+                request.claveIdempotencia(),
+                request.terminadaEn(),
                 request.resultado(),
                 request.rondaAlcanzada(),
                 request.puntaje(),
@@ -108,10 +112,12 @@ public class GameService {
                 request.prestamos(),
                 request.duracionSeg(),
                 toJokerUsages(request.comodines())));
-        player.setLastActivity(match.getCreatedAt());
+        if (player.getLastActivity() == null || match.getFinishedAt().isAfter(player.getLastActivity())) {
+            player.setLastActivity(match.getFinishedAt());
+        }
         PlayerStatistics statistics = statisticsRepository.findById(player.getId())
                 .orElseGet(() -> new PlayerStatistics(player.getId()));
-        recalculate(statistics, matchRepository.findByPlayerIdOrderByLocalNumberAsc(player.getId()));
+        recalculate(statistics, matchRepository.findByPlayerIdOrderByFinishedAtAscIdAsc(player.getId()));
         statisticsRepository.save(statistics);
         return new MatchResult(toResponse(match), true);
     }
@@ -150,9 +156,9 @@ public class GameService {
     }
 
     /**
-     * Recalculates the totals from all the matches of the player, in the order the game numbered them,
-     * so the losing streak is right even when an offline match arrives late. The best score only
-     * counts victories; on a tie the one stored first is kept.
+     * Recalculates the totals from all the matches of the player, in the order they were played, so the
+     * losing streak is right even when an offline match arrives late. The best score only counts
+     * victories; on a tie the one played first is kept.
      */
     static void recalculate(PlayerStatistics statistics, List<Match> matches) {
         int bestScore = 0;
@@ -175,10 +181,10 @@ public class GameService {
                     won++;
                     streak = 0;
                     boolean better = bestScoreAt == null || match.getScore() > bestScore
-                            || (match.getScore() == bestScore && match.getCreatedAt().isBefore(bestScoreAt));
+                            || (match.getScore() == bestScore && match.getFinishedAt().isBefore(bestScoreAt));
                     if (better) {
                         bestScore = match.getScore();
-                        bestScoreAt = match.getCreatedAt();
+                        bestScoreAt = match.getFinishedAt();
                     }
                 }
                 case "DERROTA" -> longestStreak = Math.max(longestStreak, ++streak);
@@ -191,6 +197,6 @@ public class GameService {
     }
 
     private static MatchResponse toResponse(Match match) {
-        return new MatchResponse(String.valueOf(match.getId()), match.getLocalNumber(), match.getCreatedAt());
+        return new MatchResponse(String.valueOf(match.getId()), match.getIdempotencyKey(), match.getCreatedAt());
     }
 }

@@ -64,7 +64,7 @@ class GameApiIntegrationTest {
                                   { "comodinId": 3, "vecesComprado": 1, "vecesUsado": 0 } ]""")))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/juego/partidas/1"))
-                .andExpect(jsonPath("$.numeroLocal").value(1));
+                .andExpect(jsonPath("$.claveIdempotencia").value(key(1)));
         mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON).content(match(1, "VICTORIA", 1510, "[]")))
                 .andExpect(status().isOk())
@@ -81,19 +81,39 @@ class GameApiIntegrationTest {
     }
 
     @Test
-    void countsTheLosingStreakInTheOrderOfTheLocalNumber() throws Exception {
+    void countsTheLosingStreakInTheOrderTheMatchesWerePlayed() throws Exception {
         String token = register("andrik");
 
-        // Match 2 arrives last (it was played offline): the streak is 1, 2, 3 by local number
-        for (int localNumber : new int[] {1, 3, 2}) {
+        // Match 2 arrives last (it was played offline): the streak is 1, 2, 3 by terminadaEn
+        for (int match : new int[] {1, 3, 2}) {
             mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
-                            .contentType(MediaType.APPLICATION_JSON).content(match(localNumber, "DERROTA", 100, null)))
+                            .contentType(MediaType.APPLICATION_JSON).content(match(match, "DERROTA", 100, null)))
                     .andExpect(status().isCreated());
         }
 
         assertThat(jdbc.queryForObject("SELECT racha_derrotas_max FROM estadistica_jugador", Integer.class))
                 .isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT puntaje_maximo_en FROM estadistica_jugador", Object.class)).isNull();
+    }
+
+    @Test
+    void keepsTheMatchesOfTwoDevicesAndRejectsAKeyOfAnotherPlayer() throws Exception {
+        String token = register("andrik");
+
+        // Each device counted its first match as 1; with a key per match both are stored
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(match(1, "DERROTA", 100, null)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(match(2, "DERROTA", 100, null)))
+                .andExpect(status().isCreated());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM partida", Integer.class)).isEqualTo(2);
+
+        String otherToken = register("jesus", "2");
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + otherToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(match(1, "DERROTA", 100, null)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("La claveIdempotencia ya pertenece a la partida de otro jugador"));
     }
 
     @Test
@@ -146,10 +166,14 @@ class GameApiIntegrationTest {
     }
 
     private String register(String alias) throws Exception {
+        return register(alias, "1");
+    }
+
+    private String register(String alias, String expectedId) throws Exception {
         String body = mockMvc.perform(post("/api/juego/registro").contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"alias\": \"" + alias + "\", \"contrasena\": \"" + PASSWORD + "\" }"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.jugadorId").value("1"))
+                .andExpect(jsonPath("$.jugadorId").value(expectedId))
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.token");
     }
@@ -158,11 +182,17 @@ class GameApiIntegrationTest {
         return "{ \"jugadorId\": " + playerId + ", \"contrasena\": \"" + password + "\" }";
     }
 
-    private static String match(int localNumber, String result, int score, String jokers) {
+    /** Match number {@code n} (1 to 9): its key and its date (October n) depend only on n. */
+    private static String match(int n, String result, int score, String jokers) {
         return """
-                { "numeroLocal": %d, "resultado": "%s", "rondaAlcanzada": 5, "puntaje": %d,
-                  "dineroInvertido": 3000, "dineroGanado": 2500, "dineroPerdido": 1200, "vecesTodoONada": 1,
-                  "empenos": 0, "prestamos": 1, "duracionSeg": 900, "comodines": %s }
-                """.formatted(localNumber, result, score, jokers);
+                { "claveIdempotencia": "%s", "terminadaEn": "2026-10-0%dT10:00:00Z", "resultado": "%s",
+                  "rondaAlcanzada": 5, "puntaje": %d, "dineroInvertido": 3000, "dineroGanado": 2500,
+                  "dineroPerdido": 1200, "vecesTodoONada": 1, "empenos": 0, "prestamos": 1, "duracionSeg": 900,
+                  "comodines": %s }
+                """.formatted(key(n), n, result, score, jokers);
+    }
+
+    private static String key(int n) {
+        return "00000000-0000-4000-8000-%012d".formatted(n);
     }
 }

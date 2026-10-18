@@ -5,13 +5,20 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
-/** Finished match sent by the game. {@code comodines} may be omitted when no joker was bought or used. */
+/**
+ * Finished match sent by the game. {@code claveIdempotencia} is the UUID the game generated when the match
+ * ended and repeats on every retry. {@code comodines} may be omitted when no joker was bought or used.
+ */
 public record MatchRequest(
-        @NotNull(message = "numeroLocal es obligatorio")
-        @Min(value = 1, message = "numeroLocal debe ser mayor o igual a 1")
-        Integer numeroLocal,
+        @NotNull(message = "claveIdempotencia es obligatoria")
+        UUID claveIdempotencia,
+
+        @NotNull(message = "terminadaEn es obligatoria")
+        Instant terminadaEn,
 
         @NotNull(message = "resultado es obligatorio")
         @Pattern(regexp = "VICTORIA|DERROTA|ABANDONO", message = "resultado debe ser VICTORIA, DERROTA o ABANDONO")

@@ -67,8 +67,8 @@ public class GameController {
     @PostMapping("/partidas")
     @Operation(summary = "Registrar partida",
             description = "Requiere Authorization: Bearer <token>. Responde 201 al guardarla y actualiza las "
-                    + "estadísticas del jugador. Si el numeroLocal ya existe para el jugador, responde 200 con la "
-                    + "partida guardada y no inserta un duplicado.")
+                    + "estadísticas del jugador. Si la claveIdempotencia ya existe, responde 200 con la partida "
+                    + "guardada y no inserta un duplicado.")
     public ResponseEntity<MatchResponse> recordMatch(
             @Parameter(description = "Bearer <token>")
             @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authorization,
