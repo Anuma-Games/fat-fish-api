@@ -65,11 +65,11 @@ class PwaApiIntegrationTest {
                 VALUES (1, 1510, '2026-10-02 10:00Z', 2, 1, 11450, 13000, 3350, 1, 3000)
                 """);
         jdbc.update("""
-                INSERT INTO partida (jugador_id, numero_local, resultado, ronda_alcanzada, puntaje, dinero_invertido,
+                INSERT INTO partida (jugador_id, clave_idempotencia, terminada_en, resultado, ronda_alcanzada, puntaje, dinero_invertido,
                     dinero_ganado, dinero_perdido, veces_todo_o_nada, empenos, prestamos, duracion_seg, creada_en)
                 VALUES
-                (1, 1, 'DERROTA', 4, 281, 2350, 1800, 1450, 0, 0, 0, 1200, '2026-10-01 10:00Z'),
-                (1, 2, 'VICTORIA', 9, 1510, 9100, 11200, 1900, 1, 0, 0, 1800, '2026-10-02 10:00Z')
+                (1, gen_random_uuid(), '2026-10-01 10:00Z', 'DERROTA', 4, 281, 2350, 1800, 1450, 0, 0, 0, 1200, '2026-10-01 10:05Z'),
+                (1, gen_random_uuid(), '2026-10-02 10:00Z', 'VICTORIA', 9, 1510, 9100, 11200, 1900, 1, 0, 0, 1800, '2026-10-02 10:05Z')
                 """);
 
         mockMvc.perform(get("/api/pwa/partidas").param("id", "1"))

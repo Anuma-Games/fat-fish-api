@@ -12,10 +12,12 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
- * Finished match sent by the game (table "partida"). {@code numero_local} is a counter kept by the
- * game and is unique per player, so a retried upload does not create a second row.
+ * Finished match sent by the game (table "partida"). {@code clave_idempotencia} is the UUID the game
+ * generates when the match ends, so a retried upload does not create a second row, even when the same
+ * account plays on several devices.
  */
 @Entity
 @Table(name = "partida")
@@ -28,8 +30,8 @@ public class Match {
     @Column(name = "jugador_id", nullable = false)
     private Long playerId;
 
-    @Column(name = "numero_local", nullable = false)
-    private int localNumber;
+    @Column(name = "clave_idempotencia", nullable = false, unique = true)
+    private UUID idempotencyKey;
 
     @Column(name = "resultado", nullable = false, length = 10)
     private String result;
@@ -61,6 +63,9 @@ public class Match {
     @Column(name = "duracion_seg", nullable = false)
     private int durationSeconds;
 
+    @Column(name = "terminada_en", nullable = false)
+    private Instant finishedAt;
+
     @Column(name = "creada_en", nullable = false)
     private Instant createdAt;
 
@@ -71,11 +76,12 @@ public class Match {
     protected Match() {
     }
 
-    public Match(Long playerId, int localNumber, String result, int roundReached, int score, int moneyInvested,
+    public Match(Long playerId, UUID idempotencyKey, Instant finishedAt, String result, int roundReached, int score, int moneyInvested,
             int moneyWon, int moneyLost, int allInCount, int pawns, int loans, int durationSeconds,
             List<JokerUsage> jokers) {
         this.playerId = playerId;
-        this.localNumber = localNumber;
+        this.idempotencyKey = idempotencyKey;
+        this.finishedAt = finishedAt;
         this.result = result;
         this.roundReached = roundReached;
         this.score = score;
@@ -98,8 +104,12 @@ public class Match {
         return playerId;
     }
 
-    public int getLocalNumber() {
-        return localNumber;
+    public UUID getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public Instant getFinishedAt() {
+        return finishedAt;
     }
 
     public String getResult() {

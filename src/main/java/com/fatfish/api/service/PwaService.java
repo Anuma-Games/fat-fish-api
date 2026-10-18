@@ -65,7 +65,7 @@ public class PwaService {
     public PwaPage<MatchDto> getMatches(long playerId, int page, int size) {
         findPlayer(playerId);
         PageRequest pageRequest = PageRequest.of(page, size,
-                Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
+                Sort.by(Sort.Order.desc("finishedAt"), Sort.Order.desc("id")));
         return PwaPage.from(matchRepository.findByPlayerId(playerId, pageRequest), PwaService::toMatch);
     }
 
@@ -101,7 +101,7 @@ public class PwaService {
                 match.getMoneyWon(),
                 match.getMoneyLost(),
                 match.getDurationSeconds(),
-                match.getCreatedAt());
+                match.getFinishedAt());
     }
 
     private static FeedbackResponse toResponse(Feedback feedback) {

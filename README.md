@@ -27,7 +27,7 @@ src/main/java/com/fatfish/api
 ├── dto          # Contrato JSON del juego (dto/juego) y de la PWA (dto/pwa)
 ├── exception    # Manejo de errores (Problem Details, mensajes en español)
 └── config       # Configuración de OpenAPI
-src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql)
+src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql, V2__…)
 docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
@@ -199,7 +199,8 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
 
 ```json
 {
-  "numeroLocal": 3, "resultado": "DERROTA", "rondaAlcanzada": 4, "puntaje": 281,
+  "claveIdempotencia": "3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13", "terminadaEn": "2026-10-16T17:40:00Z",
+  "resultado": "DERROTA", "rondaAlcanzada": 4, "puntaje": 281,
   "dineroInvertido": 2350, "dineroGanado": 1800, "dineroPerdido": 1450,
   "vecesTodoONada": 1, "empenos": 0, "prestamos": 1, "duracionSeg": 1301,
   "comodines": [
@@ -209,13 +210,18 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
 }
 ```
 
-- `numeroLocal`: contador de partidas que lleva el juego (1, 2, 3…). Es único por jugador: si el juego reenvía
-  una partida (por ejemplo, porque se perdió la respuesta), la API responde `200` con la partida guardada y no
-  inserta otra. La primera vez responde `201` con `{ "id": "12", "numeroLocal": 3, "creadaEn": "…" }`.
+- `claveIdempotencia`: el `runId` (UUID) que el juego genera con `System.Guid.NewGuid()` al terminar la partida y
+  guarda en su JSON local. Si el juego reenvía la partida (por ejemplo, porque se perdió la respuesta), la API
+  responde `200` con la partida guardada y no inserta otra. La primera vez responde `201` con
+  `{ "id": "12", "claveIdempotencia": "…", "creadaEn": "…" }`. Como la clave es única por partida y no un contador,
+  las partidas de una misma cuenta en varios dispositivos no se pisan.
+- `terminadaEn`: fecha en que el juego terminó la partida; el historial de la PWA la muestra y la ordena con ella.
 - `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: de 1 a 9; montos y contadores no negativos.
 - `comodines` es opcional. `comodinId` es el `id` de la tabla `comodin` (1 a 4) y no se puede repetir.
 - Al guardar la partida, la API recalcula `estadistica_jugador` con todas las partidas del jugador en el orden de
-  `numeroLocal`, así la racha de derrotas es correcta aunque una partida jugada sin conexión llegue tarde.
+  `terminadaEn`, así la racha de derrotas es correcta aunque una partida jugada sin conexión llegue tarde.
+- **Modo invitado:** el juego permite jugar sin cuenta; esas partidas solo se guardan en el dispositivo. Al crear la
+  cuenta o iniciar sesión, el juego las envía a este endpoint con su clave, sin cambios en la API.
 
 ### `GET /api/pwa/perfil?id=1`
 
@@ -250,7 +256,12 @@ cada reintento; si la clave ya existe, la API responde `200` con el registro gua
 
 ## Modelo de datos
 
-Una sola migración (`V1__esquema_inicial.sql`) crea todas las tablas y carga el catálogo de comodines.
+`V1__esquema_inicial.sql` crea las tablas y carga el catálogo de comodines; `V2__partida_clave_idempotencia.sql`
+cambia el contador local de `partida` por la clave UUID de cada partida y agrega `terminada_en`.
+
+> **Las migraciones que ya están en `main` no se editan.** Flyway compara su contenido con el que ya aplicó y la API
+> no arranca si cambió. Cualquier cambio al esquema va en una migración nueva (`V3__…`, `V4__…`), que Flyway aplica
+> sola al arrancar sin borrar datos.
 
 ![Modelo de datos](docs/diagramas/modelo-datos.png)
 
@@ -262,7 +273,7 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 |---|---|
 | `jugador` | Jugadores registrados desde el juego; `contrasena_hash` (BCrypt) y `token_hash` (SHA-256 del token) nunca salen en la API |
 | `estadistica_jugador` | Totales de cada jugador (1:1 con `jugador`); el ranking se ordena por `puntaje_maximo` y desempata con `puntaje_maximo_en` |
-| `partida` | Partidas terminadas; `(jugador_id, numero_local)` es único |
+| `partida` | Partidas terminadas; `clave_idempotencia` (UUID que genera el juego) es única y `terminada_en` es la fecha en que se jugó |
 | `comodin` | Catálogo de los 4 comodines del MVP |
 | `partida_comodin` | Veces que se compró y usó cada comodín en una partida |
 | `retroalimentacion` | Retroalimentación anónima de la PWA; `clave_idempotencia` es única |
