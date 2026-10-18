@@ -92,6 +92,23 @@ tiempo, tamaños y memoria), el SQL con sus parámetros y las métricas JDBC de 
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=lab
 ```
 
+**Perfil `gcp` (base de pruebas en Google Cloud SQL):** se conecta con SSL a la base de la nube. Los datos de
+conexión van en un archivo `.env` en la raíz del proyecto, que no se sube al repositorio (está en `.gitignore`):
+
+```properties
+DB_HOST=<IP pública de Cloud SQL>
+DB_NAME=fatfish
+DB_USER=<usuario>
+DB_PASSWORD=<contraseña>
+```
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=gcp
+```
+
+Por ahora el perfil solo prueba la conexión: Flyway y la validación del esquema están apagados, así que no crea
+tablas en la nube. `/actuator/health` debe mostrar la base como `UP`.
+
 También puedes levantar la API y la base de datos en contenedores:
 
 ```bash
