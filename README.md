@@ -39,6 +39,58 @@ docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de refer
 - Docker Desktop (o Docker Engine con Compose)
 - No hace falta instalar Maven: el proyecto incluye Maven Wrapper (`./mvnw`).
 
+## Uso de la API en Google Run
+**URL base (pruebas):** `https://fat-fish-api-31376020434.us-south1.run.app` (solo HTTPS).
+Documentación en `/swagger-ui.html` y salud en `/actuator/health`. Los clientes leen la URL de un archivo de
+configuración, no la escriben en el código.
+
+### Qué se necesita
+
+| Control | Qué es | Cabecera |
+|---|---|---|
+| **Llave de la API** | Secreto compartido del equipo. Se pide al responsable de la API; **nunca se sube a Git** | `X-Api-Key: <llave>` |
+| **Token del jugador** | Lo entrega `registro` o `sesion` y autoriza escribir partidas | `Authorization: Bearer <token>` |
+
+| Endpoint | Llave | Token | Éxito | Errores |
+|---|:---:|:---:|---|---|
+| `POST /api/juego/registro` | Sí | No | `201` | `400` |
+| `POST /api/juego/sesion` | Sí | No (id y contraseña) | `200` | `400`, `401` |
+| `PUT /api/juego/contrasena` | Sí | Sí | `204` | `400`, `401` |
+| `POST /api/juego/partidas` | Sí | Sí | `201` (`200` si ya existía) | `400`, `401` |
+| `GET /api/pwa/perfil?id=` | Sí | No | `200` | `400`, `404` |
+| `GET /api/pwa/partidas?id=` | Sí | No | `200` | `400`, `404` |
+| `POST /api/pwa/retroalimentacion` | Sí | No | `201` (`200` si ya existía) | `400` |
+| `GET /actuator/health` | No | No | `200` | |
+
+### Primera prueba
+
+```bash
+URL=https://fat-fish-api-31376020434.us-south1.run.app
+KEY=<llave-del-equipo>
+
+curl -i $URL/actuator/health                                   # 200, sin llave
+curl -i "$URL/api/pwa/perfil?id=1"                             # 403: falta la llave
+curl -i -H "X-Api-Key: $KEY" "$URL/api/pwa/perfil?id=1"        # 200, o 404 si no existe
+```
+
+En PowerShell usa `curl.exe`. En Postman, define `X-Api-Key: {{apiKey}}` a nivel de colección.
+
+### Errores
+
+Formato Problem Details (RFC 9457), en español.
+
+| Código | Qué hacer |
+|---|---|
+| `400` | Corregir el cuerpo (`errors` lista los campos). No reintentar igual |
+| `401` | Token ausente, inválido o reemplazado: pedir `POST /api/juego/sesion` |
+| `403` | Falta la llave o es inválida. **No pedir al jugador iniciar sesión** |
+| `404` | El jugador no existe |
+| `5xx` o red | Reintentar con espera creciente y la misma clave de idempotencia |
+
+.
+## Uso local
+
+
 ## 1. Levantar PostgreSQL con Docker Compose
 
 ```bash
