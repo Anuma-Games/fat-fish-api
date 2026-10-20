@@ -39,7 +39,8 @@ docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de refer
 - Docker Desktop (o Docker Engine con Compose)
 - No hace falta instalar Maven: el proyecto incluye Maven Wrapper (`./mvnw`).
 
-## Uso de la API en Google Run
+## Uso de la API en Cloud Run
+
 **URL base (pruebas):** `https://fat-fish-api-31376020434.us-south1.run.app` (solo HTTPS).
 Documentación en `/swagger-ui.html` y salud en `/actuator/health`. Los clientes leen la URL de un archivo de
 configuración, no la escriben en el código.
@@ -87,9 +88,22 @@ Formato Problem Details (RFC 9457), en español.
 | `404` | El jugador no existe |
 | `5xx` o red | Reintentar con espera creciente y la misma clave de idempotencia |
 
-.
-## Uso local
+### Configuración en Cloud Run
 
+La API corre en Cloud Run con el perfil `cloudrun` y se conecta a Cloud SQL con el conector de Google, sin IPs
+autorizadas. La contraseña de la base y la llave de la API se guardan en Secret Manager y llegan como variables de
+entorno; nunca se escriben en el repositorio.
+
+| Variable | Uso |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | `cloudrun`: pool de conexiones pequeño, Flyway activo, URLs `https` en Swagger y apagado ordenado |
+| `DB_URL` | Conexión por el conector: `jdbc:postgresql:///fatfish?cloudSqlInstance=<proyecto>:<región>:<instancia>&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
+| `DB_USER` y `DB_PASSWORD` | Usuario y contraseña de la base (la contraseña, desde Secret Manager) |
+| `FATFISH_SECURITY_API_KEY` | Llave que se compara con la cabecera `X-Api-Key` (desde Secret Manager). Si está vacía, el filtro queda apagado |
+| `FATFISH_SECURITY_API_KEY_REQUIRED` | Con `true`, la aplicación no arranca si falta la llave, para no quedar abierta por error |
+
+El perfil `cloudrun` es para la API publicada. Para trabajar desde tu computadora contra la base de la nube se usa el
+perfil `gcp` (sección 2).
 
 ## 1. Levantar PostgreSQL con Docker Compose
 
@@ -130,6 +144,13 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish ./mvnw spring-boot:run
 ```
 
 Flyway aplica las migraciones al arrancar.
+
+En local la llave de la API está apagada. Para probarla, arranca con una llave cualquiera; las peticiones a `/api/**`
+sin la cabecera `X-Api-Key: mi-llave` responden `403`:
+
+```bash
+FATFISH_SECURITY_API_KEY=mi-llave ./mvnw spring-boot:run
+```
 
 > **Si tu base local se creó antes de FF-51** (esquema con `players` y `runs`), la API no arranca porque la migración
 > `V1` cambió. Borra y vuelve a crear las bases: con Docker, `docker compose down -v` y `docker compose up -d`; con
