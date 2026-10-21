@@ -39,6 +39,72 @@ docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de refer
 - Docker Desktop (o Docker Engine con Compose)
 - No hace falta instalar Maven: el proyecto incluye Maven Wrapper (`./mvnw`).
 
+## Uso de la API en Cloud Run
+
+**URL base (pruebas):** `https://fat-fish-api-31376020434.us-south1.run.app` (solo HTTPS).
+Documentación en `/swagger-ui.html` y salud en `/actuator/health`. Los clientes leen la URL de un archivo de
+configuración, no la escriben en el código.
+
+### Qué se necesita
+
+| Control | Qué es | Cabecera |
+|---|---|---|
+| **Llave de la API** | Secreto compartido del equipo. Se pide al responsable de la API; **nunca se sube a Git** | `X-Api-Key: <llave>` |
+| **Token del jugador** | Lo entrega `registro` o `sesion` y autoriza escribir partidas | `Authorization: Bearer <token>` |
+
+| Endpoint | Llave | Token | Éxito | Errores |
+|---|:---:|:---:|---|---|
+| `POST /api/juego/registro` | Sí | No | `201` | `400` |
+| `POST /api/juego/sesion` | Sí | No (id y contraseña) | `200` | `400`, `401` |
+| `PUT /api/juego/contrasena` | Sí | Sí | `204` | `400`, `401` |
+| `POST /api/juego/partidas` | Sí | Sí | `201` (`200` si ya existía) | `400`, `401` |
+| `GET /api/pwa/perfil?id=` | Sí | No | `200` | `400`, `404` |
+| `GET /api/pwa/partidas?id=` | Sí | No | `200` | `400`, `404` |
+| `POST /api/pwa/retroalimentacion` | Sí | No | `201` (`200` si ya existía) | `400` |
+| `GET /actuator/health` | No | No | `200` | |
+
+### Primera prueba
+
+```bash
+URL=https://fat-fish-api-31376020434.us-south1.run.app
+KEY=<llave-del-equipo>
+
+curl -i $URL/actuator/health                                   # 200, sin llave
+curl -i "$URL/api/pwa/perfil?id=1"                             # 403: falta la llave
+curl -i -H "X-Api-Key: $KEY" "$URL/api/pwa/perfil?id=1"        # 200, o 404 si no existe
+```
+
+En PowerShell usa `curl.exe`. En Postman, define `X-Api-Key: {{apiKey}}` a nivel de colección.
+
+### Errores
+
+Formato Problem Details (RFC 9457), en español.
+
+| Código | Qué hacer |
+|---|---|
+| `400` | Corregir el cuerpo (`errors` lista los campos). No reintentar igual |
+| `401` | Token ausente, inválido o reemplazado: pedir `POST /api/juego/sesion` |
+| `403` | Falta la llave o es inválida. **No pedir al jugador iniciar sesión** |
+| `404` | El jugador no existe |
+| `5xx` o red | Reintentar con espera creciente y la misma clave de idempotencia |
+
+### Configuración en Cloud Run
+
+La API corre en Cloud Run con el perfil `cloudrun` y se conecta a Cloud SQL con el conector de Google, sin IPs
+autorizadas. La contraseña de la base y la llave de la API se guardan en Secret Manager y llegan como variables de
+entorno; nunca se escriben en el repositorio.
+
+| Variable | Uso |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | `cloudrun`: pool de conexiones pequeño, Flyway activo, URLs `https` en Swagger y apagado ordenado |
+| `DB_URL` | Conexión por el conector: `jdbc:postgresql:///fatfish?cloudSqlInstance=<proyecto>:<región>:<instancia>&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
+| `DB_USER` y `DB_PASSWORD` | Usuario y contraseña de la base (la contraseña, desde Secret Manager) |
+| `FATFISH_SECURITY_API_KEY` | Llave que se compara con la cabecera `X-Api-Key` (desde Secret Manager). Si está vacía, el filtro queda apagado |
+| `FATFISH_SECURITY_API_KEY_REQUIRED` | Con `true`, la aplicación no arranca si falta la llave, para no quedar abierta por error |
+
+El perfil `cloudrun` es para la API publicada. Para trabajar desde tu computadora contra la base de la nube se usa el
+perfil `gcp` (sección 2).
+
 ## 1. Levantar PostgreSQL con Docker Compose
 
 ```bash
@@ -78,6 +144,13 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish ./mvnw spring-boot:run
 ```
 
 Flyway aplica las migraciones al arrancar.
+
+En local la llave de la API está apagada. Para probarla, arranca con una llave cualquiera; las peticiones a `/api/**`
+sin la cabecera `X-Api-Key: mi-llave` responden `403`:
+
+```bash
+FATFISH_SECURITY_API_KEY=mi-llave ./mvnw spring-boot:run
+```
 
 > **Si tu base local se creó antes de FF-51** (esquema con `players` y `runs`), la API no arranca porque la migración
 > `V1` cambió. Borra y vuelve a crear las bases: con Docker, `docker compose down -v` y `docker compose up -d`; con
@@ -266,8 +339,8 @@ cambia el contador local de `partida` por la clave UUID de cada partida y agrega
 
 ![Modelo de datos](docs/diagramas/modelo-datos.png)
 
-<sub>Código del diagrama: [`docs/diagramas/modelo-datos.mmd`](docs/diagramas/modelo-datos.mmd). La simbología y la
-descripción de cada tabla están en el [README de la PWA](https://github.com/Anuma-Games/fat-fish-pwa#3-modelo-de-datos);
+<sub>Código del diagrama: [`docs/diagramas/modelo-datos.mmd`](docs/diagramas/modelo-datos.mmd). El uso de cada tabla
+en la PWA está en su [README](https://github.com/Anuma-Games/fat-fish-pwa#5-modelo-de-datos);
 si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 
 | Tabla | Descripción |
