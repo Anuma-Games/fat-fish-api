@@ -339,8 +339,8 @@ cambia el contador local de `partida` por la clave UUID de cada partida y agrega
 
 ![Modelo de datos](docs/diagramas/modelo-datos.png)
 
-<sub>Código del diagrama: [`docs/diagramas/modelo-datos.mmd`](docs/diagramas/modelo-datos.mmd). La simbología y la
-descripción de cada tabla están en el [README de la PWA](https://github.com/Anuma-Games/fat-fish-pwa#3-modelo-de-datos);
+<sub>Código del diagrama: [`docs/diagramas/modelo-datos.mmd`](docs/diagramas/modelo-datos.mmd). El uso de cada tabla
+en la PWA está en su [README](https://github.com/Anuma-Games/fat-fish-pwa#5-modelo-de-datos);
 si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 
 | Tabla | Descripción |
