@@ -67,7 +67,7 @@ configuración, no la escriben en el código.
 
 ```bash
 URL=https://fat-fish-api-31376020434.us-south1.run.app
-KEY=<llave-del-equipo>
+KEY='<llave-del-equipo>'
 
 curl -i $URL/actuator/health                                   # 200, sin llave
 curl -i "$URL/api/pwa/perfil?id=1"                             # 403: falta la llave
