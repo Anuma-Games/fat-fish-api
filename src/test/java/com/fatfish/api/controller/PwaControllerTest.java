@@ -1,6 +1,7 @@
 package com.fatfish.api.controller;
 
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -13,11 +14,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fatfish.api.dto.pwa.FeedbackResponse;
 import com.fatfish.api.dto.pwa.MatchDto;
+import com.fatfish.api.dto.pwa.PlayerSummaryDto;
 import com.fatfish.api.dto.pwa.ProfileDto;
 import com.fatfish.api.dto.pwa.PwaPage;
+import com.fatfish.api.dto.pwa.RankingDto;
+import com.fatfish.api.dto.pwa.RankingEntryDto;
+import com.fatfish.api.dto.pwa.SurveyResponse;
 import com.fatfish.api.exception.PlayerNotFoundException;
 import com.fatfish.api.service.PwaService;
 import com.fatfish.api.service.PwaService.FeedbackResult;
+import com.fatfish.api.service.PwaService.SurveyResult;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -35,6 +41,9 @@ class PwaControllerTest {
     private static final UUID KEY = UUID.randomUUID();
     private static final String VALID_FEEDBACK = """
             { "categoria": "SUGERENCIA", "componente": "PWA", "mensaje": "Agregar el ranking semanal" }
+            """;
+    private static final String VALID_SURVEY = """
+            { "percepcionRiesgo": 4, "cambioOpinion": 3, "claridadMensaje": 5, "comentario": "Buen mensaje" }
             """;
 
     @Autowired
@@ -132,6 +141,104 @@ class PwaControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors", hasItem("categoria debe ser ERROR, SUGERENCIA u OTRO")))
                 .andExpect(jsonPath("$.errors", hasItem("mensaje debe tener entre 10 y 1000 caracteres")));
+        verifyNoInteractions(pwaService);
+    }
+
+    @Test
+    void createsSurvey() throws Exception {
+        when(pwaService.createSurvey(eq(KEY), any())).thenReturn(new SurveyResult(
+                new SurveyResponse("3", true, Instant.parse("2026-10-14T20:00:00Z")), true));
+
+        mockMvc.perform(post("/api/pwa/encuesta")
+                        .header("Idempotency-Key", KEY.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_SURVEY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.created").value(true));
+    }
+
+    @Test
+    void returnsOkForRepeatedSurveyKey() throws Exception {
+        when(pwaService.createSurvey(eq(KEY), any())).thenReturn(new SurveyResult(
+                new SurveyResponse("3", false, Instant.parse("2026-10-14T20:00:00Z")), false));
+
+        mockMvc.perform(post("/api/pwa/encuesta")
+                        .header("Idempotency-Key", KEY.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_SURVEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(false));
+    }
+
+    @Test
+    void rejectsInvalidSurvey() throws Exception {
+        mockMvc.perform(post("/api/pwa/encuesta")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "percepcionRiesgo": 6, "cambioOpinion": 3, "claridadMensaje": 0 }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasItem("percepcionRiesgo debe estar entre 1 y 5")))
+                .andExpect(jsonPath("$.errors", hasItem("claridadMensaje debe estar entre 1 y 5")));
+        verifyNoInteractions(pwaService);
+    }
+
+    @Test
+    void returnsRankingWithPlayerPosition() throws Exception {
+        RankingEntryDto entry = new RankingEntryDto(1, "5", "jesus", 1510, Instant.parse("2026-10-13T22:00:00Z"));
+        when(pwaService.getRanking(0, 10, 5L)).thenReturn(new RankingDto(
+                new PwaPage<>(List.of(entry), 0, 10, 1, 1, true, Instant.now()), entry));
+
+        mockMvc.perform(get("/api/pwa/ranking").param("pagina", "0").param("tamano", "10").param("jugadorId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pagina.contenido[0].alias").value("jesus"))
+                .andExpect(jsonPath("$.pagina.contenido[0].puntaje").value(1510))
+                .andExpect(jsonPath("$.pagina.totalElementos").value(1))
+                .andExpect(jsonPath("$.miPosicion.posicion").value(1));
+    }
+
+    @Test
+    void rejectsRankingPageAboveFour() throws Exception {
+        mockMvc.perform(get("/api/pwa/ranking").param("pagina", "5"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasItem("pagina debe estar entre 0 y 4")));
+        verifyNoInteractions(pwaService);
+    }
+
+    @Test
+    void rejectsRankingPageSizeAboveTen() throws Exception {
+        mockMvc.perform(get("/api/pwa/ranking").param("tamano", "11"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasItem("tamano debe estar entre 1 y 10")));
+        verifyNoInteractions(pwaService);
+    }
+
+    @Test
+    void searchesPlayers() throws Exception {
+        when(pwaService.searchPlayers("andrik")).thenReturn(List.of(
+                new PlayerSummaryDto("7", "andrik", Instant.parse("2026-10-13T22:44:05Z"))));
+
+        mockMvc.perform(get("/api/pwa/jugadores").param("busqueda", "andrik"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].jugadorId").value("7"))
+                .andExpect(jsonPath("$[0].alias").value("andrik"));
+    }
+
+    @Test
+    void returnsEmptyListWhenNoPlayerMatches() throws Exception {
+        when(pwaService.searchPlayers("zzz")).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/pwa/jugadores").param("busqueda", "zzz"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void rejectsBlankPlayerSearch() throws Exception {
+        mockMvc.perform(get("/api/pwa/jugadores").param("busqueda", "   "))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasItem("busqueda es obligatoria")));
         verifyNoInteractions(pwaService);
     }
 }
