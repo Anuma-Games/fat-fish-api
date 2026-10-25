@@ -340,9 +340,10 @@ se generó la respuesta, para mostrar la antigüedad de los datos cuando la PWA 
 ### `GET /api/pwa/ranking?pagina=0&tamano=10&jugadorId=5`
 
 Ranking mundial: el mejor puntaje en una victoria de cada jugador, hasta el lugar 50. Se desempata por quién lo logró
-primero. `pagina` va de 0 a 4 y `tamano` de 1 a 10 (5 páginas de 10 cubren el top 50). `jugadorId` es opcional: si se
-envía, `miPosicion` trae su lugar real en el ranking aunque quede fuera del top 50; es `null` si no se envió o el
-jugador todavía no tiene victorias. `pagina` usa el mismo formato paginado que el historial de partidas.
+primero. `tamano` va de 1 a 10 y `pagina` empieza en 0; el número de páginas depende de `tamano` (5 páginas de 10
+cubren el top 50) y una página fuera del top 50 responde vacía. `jugadorId` es opcional: si se envía, `miPosicion`
+trae su lugar real en el ranking aunque quede fuera del top 50; es `null` si no se envió o el jugador todavía no
+tiene victorias. `pagina` usa el mismo formato paginado que el historial de partidas.
 
 ```json
 {

@@ -198,10 +198,10 @@ class PwaControllerTest {
     }
 
     @Test
-    void rejectsRankingPageAboveFour() throws Exception {
-        mockMvc.perform(get("/api/pwa/ranking").param("pagina", "5"))
+    void rejectsRankingPageBeyondTopFifty() throws Exception {
+        mockMvc.perform(get("/api/pwa/ranking").param("pagina", "50"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors", hasItem("pagina debe estar entre 0 y 4")));
+                .andExpect(jsonPath("$.errors", hasItem("pagina debe estar entre 0 y 49")));
         verifyNoInteractions(pwaService);
     }
 

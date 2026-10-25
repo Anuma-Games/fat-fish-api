@@ -3,40 +3,43 @@ package com.fatfish.api.service;
 import com.fatfish.api.dto.pwa.FeedbackRequest;
 import com.fatfish.api.dto.pwa.FeedbackResponse;
 import com.fatfish.api.dto.pwa.MatchDto;
+import com.fatfish.api.dto.pwa.PlayerSummaryDto;
 import com.fatfish.api.dto.pwa.ProfileDto;
 import com.fatfish.api.dto.pwa.PwaPage;
+import com.fatfish.api.dto.pwa.RankingDto;
+import com.fatfish.api.dto.pwa.RankingEntryDto;
+import com.fatfish.api.dto.pwa.SurveyRequest;
+import com.fatfish.api.dto.pwa.SurveyResponse;
 import com.fatfish.api.exception.PlayerNotFoundException;
 import com.fatfish.api.model.Feedback;
 import com.fatfish.api.model.Match;
 import com.fatfish.api.model.Player;
 import com.fatfish.api.model.PlayerStatistics;
+import com.fatfish.api.model.Survey;
 import com.fatfish.api.repository.FeedbackRepository;
 import com.fatfish.api.repository.MatchRepository;
 import com.fatfish.api.repository.PlayerRepository;
 import com.fatfish.api.repository.PlayerStatisticsRepository;
-import java.time.Instant;
-import java.util.Optional;
-import java.util.UUID;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import com.fatfish.api.dto.pwa.PlayerSummaryDto;
-import com.fatfish.api.dto.pwa.RankingDto;
-import com.fatfish.api.dto.pwa.RankingEntryDto;
-import com.fatfish.api.dto.pwa.SurveyRequest;
-import com.fatfish.api.dto.pwa.SurveyResponse;
-import com.fatfish.api.model.Survey;
 import com.fatfish.api.repository.PlayerStatisticsRepository.RankingRow;
 import com.fatfish.api.repository.SurveyRepository;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-/** Read and insert operations used by the PWA ({@code /api/pwa}), over the tables jugador, estadistica_jugador, partida and retroalimentacion. */
+/**
+ * Read and insert operations used by the PWA ({@code /api/pwa}), over the tables jugador, estadistica_jugador,
+ * partida, retroalimentacion and encuesta.
+ */
 @Service
 public class PwaService {
 
@@ -58,6 +61,25 @@ public class PwaService {
         this.matchRepository = matchRepository;
         this.feedbackRepository = feedbackRepository;
         this.surveyRepository = surveyRepository;
+    }
+
+    /**
+     * Players whose id is exactly the search text (only digits) or whose alias contains it, ignoring case. The id
+     * match goes first; then by last activity. Runs in one transaction so both queries return the same
+     * {@link Player} instance and {@code distinct()} removes the repeated one.
+     */
+    @Transactional(readOnly = true)
+    public List<PlayerSummaryDto> searchPlayers(String search) {
+        String term = search.strip();
+        Stream<Player> byId = DIGITS.matcher(term).matches()
+                ? playerRepository.findById(Long.parseLong(term)).stream()
+                : Stream.empty();
+        Stream<Player> byAlias = playerRepository.searchByAlias(term, Limit.of(MAX_SEARCH_RESULTS)).stream();
+        return Stream.concat(byId, byAlias)
+                .distinct()
+                .limit(MAX_SEARCH_RESULTS)
+                .map(PwaService::toSummary)
+                .toList();
     }
 
     /** Profile of a player with the six statistics of the record, read from estadistica_jugador. */
@@ -91,6 +113,28 @@ public class PwaService {
     }
 
     /**
+     * World ranking: best winning score of each player, up to position 50. Ties go to whoever reached the score
+     * first, the same rule the game uses to store it. {@code miPosicion} is the real position of the player, even
+     * outside the top 50.
+     */
+    @Transactional(readOnly = true)
+    public RankingDto getRanking(int page, int size, Long playerId) {
+        Page<RankingRow> rows = statisticsRepository.findRanking(PageRequest.of(page, size));
+        long firstPosition = rows.getPageable().getOffset() + 1;
+        // The query does not know the top 50: a page that crosses position 50 is cut, one after it stays empty
+        long slotsLeft = Math.max(0, RANKING_SIZE - rows.getPageable().getOffset());
+        List<RankingRow> inTop = rows.getContent().stream().limit(slotsLeft).toList();
+        List<RankingEntryDto> entries = IntStream.range(0, inTop.size())
+                .mapToObj(i -> toRankingEntry(firstPosition + i, inTop.get(i)))
+                .toList();
+        long total = Math.min(rows.getTotalElements(), RANKING_SIZE);
+        int totalPages = (int) ((total + size - 1) / size);
+        PwaPage<RankingEntryDto> ranking = new PwaPage<>(
+                entries, page, size, total, totalPages, page + 1 >= totalPages, Instant.now());
+        return new RankingDto(ranking, playerId == null ? null : findPosition(playerId));
+    }
+
+    /**
      * Stores a feedback once per idempotency key. A retry with the same key returns the stored
      * feedback instead of inserting it again.
      */
@@ -104,11 +148,16 @@ public class PwaService {
                 idempotencyKey, request.categoria(), request.componente(), request.mensaje().strip()));
         return new FeedbackResult(toResponse(saved), true);
     }
+
+    /**
+     * Stores an anonymous survey once per idempotency key, like {@link #createFeedback}. A blank comment is
+     * stored as null.
+     */
     @Transactional
     public SurveyResult createSurvey(UUID idempotencyKey, SurveyRequest request) {
         Optional<Survey> existing = surveyRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
-            return new SurveyResult(toResponse(existing.get(),false), false);
+            return new SurveyResult(toResponse(existing.get(), false), false);
         }
         Survey saved = surveyRepository.save(new Survey(
                 idempotencyKey,
@@ -116,44 +165,25 @@ public class PwaService {
                 request.cambioOpinion().shortValue(),
                 request.claridadMensaje().shortValue(),
                 blankToNull(request.comentario())));
-        return new SurveyResult(toResponse(saved,true ), true);
+        return new SurveyResult(toResponse(saved, true), true);
     }
-    @Transactional(readOnly = true)
-    public List<PlayerSummaryDto> searchPlayers(String search) {
-        String term = search.strip();
-        Stream<Player> byId = DIGITS.matcher(term).matches()
-                ? playerRepository.findById(Long.parseLong(term)).stream()
-                : Stream.empty();
-        Stream<Player> byAlias = playerRepository.searchByAlias(term, Limit.of(MAX_SEARCH_RESULTS)).stream();
-        return Stream.concat(byId, byAlias)
-                .distinct()
-                .limit(MAX_SEARCH_RESULTS)
-                .map(PwaService::toSummary)
-                .toList();
-    }
-    @Transactional(readOnly = true)
-    public RankingDto getRanking(int page, int size, Long playerId) {
-        Page<RankingRow> rows = statisticsRepository.findRanking(PageRequest.of(page, size));
-        long firstPosition = rows.getPageable().getOffset() + 1;
-        List<RankingEntryDto> entries = IntStream.range(0, rows.getNumberOfElements())
-                .mapToObj(i -> toRankingEntry(firstPosition + i, rows.getContent().get(i)))
-                .toList();
-        long total = Math.min(rows.getTotalElements(), RANKING_SIZE);
-        int totalPages = (int) ((total + size - 1) / size);
-        PwaPage<RankingEntryDto> ranking = new PwaPage<>(
-                entries, page, size, total, totalPages, page + 1 >= totalPages, Instant.now());
-        return new RankingDto(ranking, playerId == null ? null : findPosition(playerId));
-    }
-    
-     public record SurveyResult(SurveyResponse survey, boolean created) {
-    }
-
 
     public record FeedbackResult(FeedbackResponse feedback, boolean created) {
     }
 
+    public record SurveyResult(SurveyResponse survey, boolean created) {
+    }
+
     private Player findPlayer(long playerId) {
         return playerRepository.findById(playerId).orElseThrow(() -> new PlayerNotFoundException(playerId));
+    }
+
+    private RankingEntryDto findPosition(long playerId) {
+        return statisticsRepository.findRankingRow(playerId)
+                .map(row -> toRankingEntry(
+                        statisticsRepository.countAhead(row.getBestScore(), row.getBestScoreAt(), row.getPlayerId()) + 1,
+                        row))
+                .orElse(null);
     }
 
     static MatchDto toMatch(Match match) {
@@ -169,15 +199,8 @@ public class PwaService {
                 match.getFinishedAt());
     }
 
-    private static FeedbackResponse toResponse(Feedback feedback) {
-        return new FeedbackResponse(String.valueOf(feedback.getId()), feedback.getCreatedAt());
-    }
-     private RankingEntryDto findPosition(long playerId) {
-        return statisticsRepository.findRankingRow(playerId)
-                .map(row -> toRankingEntry(
-                        statisticsRepository.countAhead(row.getBestScore(), row.getBestScoreAt(), row.getPlayerId()) + 1,
-                        row))
-                .orElse(null);
+    private static PlayerSummaryDto toSummary(Player player) {
+        return new PlayerSummaryDto(String.valueOf(player.getId()), player.getAlias(), player.getLastActivity());
     }
 
     private static RankingEntryDto toRankingEntry(long position, RankingRow row) {
@@ -185,8 +208,8 @@ public class PwaService {
                 row.getBestScoreAt());
     }
 
-    private static PlayerSummaryDto toSummary(Player player) {
-        return new PlayerSummaryDto(String.valueOf(player.getId()), player.getAlias(), player.getLastActivity());
+    private static FeedbackResponse toResponse(Feedback feedback) {
+        return new FeedbackResponse(String.valueOf(feedback.getId()), feedback.getCreatedAt());
     }
 
     private static SurveyResponse toResponse(Survey survey, boolean created) {

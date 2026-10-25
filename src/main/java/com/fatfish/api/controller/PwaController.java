@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
 @RestController
 @RequestMapping("/api/pwa")
 @Tag(name = "PWA", description = "Consultas e inserciones que usa la PWA")
@@ -41,6 +42,7 @@ public class PwaController {
     public PwaController(PwaService pwaService) {
         this.pwaService = pwaService;
     }
+
     @GetMapping("/jugadores")
     @Operation(summary = "Buscar jugadores",
             description = "Busca por id exacto (solo dígitos) y por alias que contenga el texto, sin distinguir "
@@ -72,14 +74,16 @@ public class PwaController {
             @Max(value = 50, message = "tamano debe estar entre 1 y 50") int tamano) {
         return pwaService.getMatches(id, pagina, tamano);
     }
+
     @GetMapping("/ranking")
     @Operation(summary = "Ranking mundial",
-            description = "Mejor puntaje en una victoria de cada jugador, hasta el lugar 50 (5 páginas de 10). "
-                    + "Si se envía jugadorId, miPosicion trae su lugar real; es nulo si no se envió o no tiene victorias.")
+            description = "Mejor puntaje en una victoria de cada jugador, hasta el lugar 50. La página empieza en 0 "
+                    + "y el número de páginas depende de tamano (5 páginas de 10). Si se envía jugadorId, miPosicion "
+                    + "trae su lugar real; es nulo si no se envió o no tiene victorias.")
     public RankingDto getRanking(
             @RequestParam(defaultValue = "0")
-            @Min(value = 0, message = "pagina debe estar entre 0 y 4")
-            @Max(value = 4, message = "pagina debe estar entre 0 y 4") int pagina,
+            @Min(value = 0, message = "pagina debe estar entre 0 y 49")
+            @Max(value = 49, message = "pagina debe estar entre 0 y 49") int pagina,
             @RequestParam(defaultValue = "10")
             @Min(value = 1, message = "tamano debe estar entre 1 y 10")
             @Max(value = 10, message = "tamano debe estar entre 1 y 10") int tamano,
@@ -104,10 +108,12 @@ public class PwaController {
                 .location(URI.create("/api/pwa/retroalimentacion/" + result.feedback().id()))
                 .body(result.feedback());
     }
+
     @PostMapping("/encuesta")
     @Operation(summary = "Enviar encuesta anónima",
-            description = "Responde 201 solo para confirmar la recepción y no devuelve ningún identificador. "
-                    + "Si la cabecera Idempotency-Key ya se usó, responde 200 y no inserta un duplicado.")
+            description = "Responde 201 con el id y la fecha de recepción; no guarda ningún dato del jugador. "
+                    + "Si la cabecera Idempotency-Key ya se usó, responde 200 con created en false y no inserta "
+                    + "un duplicado.")
     public ResponseEntity<SurveyResponse> createSurvey(
             @RequestHeader(name = "Idempotency-Key", required = false) UUID idempotencyKey,
             @Valid @RequestBody SurveyRequest request) {
