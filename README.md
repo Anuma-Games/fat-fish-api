@@ -6,7 +6,8 @@ Prototipo del backend del videojuego **Fat Fish** (proyecto integrador, grupo ID
 
 El juego registra al jugador, guarda cada partida en su equipo (local first) y la envía a esta API
 cuando hay conexión. La API guarda cada partida una sola vez, actualiza las estadísticas del jugador
-y expone su perfil e historial para la PWA y la app móvil.
+y expone su perfil, historial, ranking mundial y búsqueda de jugadores para la PWA y la app móvil, que también
+envía retroalimentación y la encuesta anónima.
 
 ## Tecnologías
 
@@ -58,9 +59,12 @@ configuración, no la escriben en el código.
 | `POST /api/juego/sesion` | Sí | No (id y contraseña) | `200` | `400`, `401` |
 | `PUT /api/juego/contrasena` | Sí | Sí | `204` | `400`, `401` |
 | `POST /api/juego/partidas` | Sí | Sí | `201` (`200` si ya existía) | `400`, `401` |
+| `GET /api/pwa/jugadores?busqueda=` | Sí | No | `200` (lista vacía si no hay coincidencias) | `400` |
 | `GET /api/pwa/perfil?id=` | Sí | No | `200` | `400`, `404` |
 | `GET /api/pwa/partidas?id=` | Sí | No | `200` | `400`, `404` |
+| `GET /api/pwa/ranking` | Sí | No | `200` | `400` |
 | `POST /api/pwa/retroalimentacion` | Sí | No | `201` (`200` si ya existía) | `400` |
+| `POST /api/pwa/encuesta` | Sí | No | `201` (`200` si ya existía) | `400` |
 | `GET /actuator/health` | No | No | `200` | |
 
 ### Primera prueba
@@ -297,6 +301,19 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
 - **Modo invitado:** el juego permite jugar sin cuenta; esas partidas solo se guardan en el dispositivo. Al crear la
   cuenta o iniciar sesión, el juego las envía a este endpoint con su clave, sin cambios en la API.
 
+### `GET /api/pwa/jugadores?busqueda=andrik`
+
+Busca jugadores para la PWA. `busqueda` es obligatoria (máximo 24 caracteres). Si el texto son solo dígitos, busca
+primero el jugador con ese `id` exacto; después agrega los jugadores cuyo `alias` contenga el texto, sin distinguir
+mayúsculas, ordenados por última actividad. Devuelve máximo 20 resultados sin repetir jugadores; si no hay
+coincidencias responde `200` con una lista vacía.
+
+```json
+[
+  { "jugadorId": "5", "alias": "andrik", "ultimaActividad": "2026-10-13T22:44:05Z" }
+]
+```
+
 ### `GET /api/pwa/perfil?id=1`
 
 Alias, fechas y las seis estadísticas del expediente (partidas, ganadas, invertido, perdido, racha máxima de
@@ -320,6 +337,27 @@ se generó la respuesta, para mostrar la antigüedad de los datos cuando la PWA 
 }
 ```
 
+### `GET /api/pwa/ranking?pagina=0&tamano=10&jugadorId=5`
+
+Ranking mundial: el mejor puntaje en una victoria de cada jugador, hasta el lugar 50. Se desempata por quién lo logró
+primero. `tamano` va de 1 a 10 y `pagina` empieza en 0; el número de páginas depende de `tamano` (5 páginas de 10
+cubren el top 50) y una página fuera del top 50 responde vacía. `jugadorId` es opcional: si se envía, `miPosicion`
+trae su lugar real en el ranking aunque quede fuera del top 50; es `null` si no se envió o el jugador todavía no
+tiene victorias. `pagina` usa el mismo formato paginado que el historial de partidas.
+
+```json
+{
+  "pagina": {
+    "contenido": [
+      { "posicion": 1, "jugadorId": "8", "alias": "gael", "puntaje": 1510, "logradoEn": "2026-10-13T22:00:00Z" }
+    ],
+    "pagina": 0, "tamano": 10, "totalElementos": 1, "totalPaginas": 1, "ultima": true,
+    "generadoEn": "2026-10-15T00:43:05Z"
+  },
+  "miPosicion": { "posicion": 12, "jugadorId": "5", "alias": "andrik", "puntaje": 640, "logradoEn": "2026-10-09T18:30:00Z" }
+}
+```
+
 ### `POST /api/pwa/retroalimentacion`
 
 Guarda una retroalimentación anónima. `categoria`: `ERROR`, `SUGERENCIA` u `OTRO`; `componente`: `JUEGO`, `PWA`
@@ -327,6 +365,19 @@ u `OTRO`; `mensaje`: de 10 a 1000 caracteres. Responde `201` con `{ "id": "5", "
 
 La cabecera opcional `Idempotency-Key` (UUID) evita duplicados: la PWA la genera al guardar el envío y la repite en
 cada reintento; si la clave ya existe, la API responde `200` con el registro guardado y no inserta otro.
+
+### `POST /api/pwa/encuesta`
+
+Guarda una encuesta anónima sobre la percepción del juego y la ludopatía. `percepcionRiesgo`, `cambioOpinion` y
+`claridadMensaje`: obligatorios, de 1 a 5; `comentario`: opcional, máximo 500 caracteres (si viene vacío se guarda
+como nulo). Responde `201`:
+
+```json
+{ "id": "3", "created": true, "enviadaEn": "2026-10-16T20:00:00Z" }
+```
+
+La cabecera opcional `Idempotency-Key` (UUID) funciona igual que en la retroalimentación: si la clave ya existe, la
+API responde `200` con `created` en `false` y no inserta un duplicado. La encuesta no guarda ningún dato del jugador.
 
 ## Modelo de datos
 
@@ -351,7 +402,7 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 | `comodin` | Catálogo de los 4 comodines del MVP |
 | `partida_comodin` | Veces que se compró y usó cada comodín en una partida |
 | `retroalimentacion` | Retroalimentación anónima de la PWA; `clave_idempotencia` es única |
-| `encuesta` | Encuesta anónima de la PWA; `clave_idempotencia` es única (sin endpoint todavía) |
+| `encuesta` | Encuesta anónima de la PWA; `clave_idempotencia` es única |
 
 ## Integración continua
 
