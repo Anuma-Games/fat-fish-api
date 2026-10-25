@@ -8,7 +8,16 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fatfish.api.dto.pwa.FeedbackRequest;
+import com.fatfish.api.dto.pwa.SurveyRequest;
+import com.fatfish.api.service.PwaService;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +39,9 @@ class PwaApiIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private PwaService pwaService;
 
     @BeforeEach
     void cleanDatabase() {
@@ -186,5 +198,38 @@ class PwaApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.pagina.contenido", hasSize(0)))
                 .andExpect(jsonPath("$.miPosicion").value(nullValue()));
+    }
+
+    @Test
+    void concurrentRetriesWithTheSameKeyStoreOneSurveyAndOneFeedback() throws Exception {
+        SurveyRequest survey = new SurveyRequest(4, 3, 5, null);
+        FeedbackRequest feedback = new FeedbackRequest("ERROR", "PWA", "El ranking no carga en el celular");
+        int rounds = 20;
+
+        for (int i = 0; i < rounds; i++) {
+            UUID surveyKey = UUID.randomUUID();
+            UUID feedbackKey = UUID.randomUUID();
+            assertThat(runTwiceAtOnce(() -> pwaService.createSurvey(surveyKey, survey).created()))
+                    .containsExactlyInAnyOrder(true, false);
+            assertThat(runTwiceAtOnce(() -> pwaService.createFeedback(feedbackKey, feedback).created()))
+                    .containsExactlyInAnyOrder(true, false);
+        }
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM encuesta", Integer.class)).isEqualTo(rounds);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM retroalimentacion", Integer.class)).isEqualTo(rounds);
+    }
+
+    /** Runs the same call from two threads released at the same time, like two overlapping retries of the PWA. */
+    private static List<Boolean> runTwiceAtOnce(Callable<Boolean> call) throws Exception {
+        CyclicBarrier start = new CyclicBarrier(2);
+        Callable<Boolean> task = () -> {
+            start.await();
+            return call.call();
+        };
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Boolean> first = executor.submit(task);
+            Future<Boolean> second = executor.submit(task);
+            return List.of(first.get(), second.get());
+        }
     }
 }
