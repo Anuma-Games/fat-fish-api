@@ -29,6 +29,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -137,35 +138,47 @@ public class PwaService {
     /**
      * Stores a feedback once per idempotency key. A retry with the same key returns the stored
      * feedback instead of inserting it again.
+     *
+     * <p>Not {@code @Transactional} on purpose: each repository call runs in its own transaction. When two
+     * retries with the same key overlap, the losing insert fails on the unique key, and the second read finds
+     * the row the other request already committed.
      */
-    @Transactional
     public FeedbackResult createFeedback(UUID idempotencyKey, FeedbackRequest request) {
         Optional<Feedback> existing = feedbackRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             return new FeedbackResult(toResponse(existing.get()), false);
         }
-        Feedback saved = feedbackRepository.save(new Feedback(
-                idempotencyKey, request.categoria(), request.componente(), request.mensaje().strip()));
-        return new FeedbackResult(toResponse(saved), true);
+        try {
+            Feedback saved = feedbackRepository.save(new Feedback(
+                    idempotencyKey, request.categoria(), request.componente(), request.mensaje().strip()));
+            return new FeedbackResult(toResponse(saved), true);
+        } catch (DataIntegrityViolationException e) {
+            Feedback stored = feedbackRepository.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> e);
+            return new FeedbackResult(toResponse(stored), false);
+        }
     }
 
     /**
-     * Stores an anonymous survey once per idempotency key, like {@link #createFeedback}. A blank comment is
-     * stored as null.
+     * Stores an anonymous survey once per idempotency key, like {@link #createFeedback} (also without
+     * {@code @Transactional}, for the same reason). A blank comment is stored as null.
      */
-    @Transactional
     public SurveyResult createSurvey(UUID idempotencyKey, SurveyRequest request) {
         Optional<Survey> existing = surveyRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             return new SurveyResult(toResponse(existing.get(), false), false);
         }
-        Survey saved = surveyRepository.save(new Survey(
-                idempotencyKey,
-                request.percepcionRiesgo().shortValue(),
-                request.cambioOpinion().shortValue(),
-                request.claridadMensaje().shortValue(),
-                blankToNull(request.comentario())));
-        return new SurveyResult(toResponse(saved, true), true);
+        try {
+            Survey saved = surveyRepository.save(new Survey(
+                    idempotencyKey,
+                    request.percepcionRiesgo().shortValue(),
+                    request.cambioOpinion().shortValue(),
+                    request.claridadMensaje().shortValue(),
+                    blankToNull(request.comentario())));
+            return new SurveyResult(toResponse(saved, true), true);
+        } catch (DataIntegrityViolationException e) {
+            Survey stored = surveyRepository.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> e);
+            return new SurveyResult(toResponse(stored, false), false);
+        }
     }
 
     public record FeedbackResult(FeedbackResponse feedback, boolean created) {

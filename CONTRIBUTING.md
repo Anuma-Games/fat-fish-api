@@ -18,7 +18,15 @@ es cómo se prepara el entorno y cómo se prueba, que está en la sección de es
 
 - JDK 21. No hace falta Maven: el proyecto trae Maven Wrapper (`./mvnw`).
 - Docker Desktop para la base de datos: `docker compose up -d` levanta PostgreSQL con las bases `fatfish` y
-  `fatfish_test`.
+  `fatfish_test`. El script que crea `fatfish_test` solo corre la primera vez, con un volumen nuevo. Si ya tenías el
+  volumen de antes y `./mvnw test` no encuentra la base, créala sin perder tus datos:
+
+  ```bash
+  docker exec fatfish-postgres psql -U fatfish -d fatfish -c "CREATE DATABASE fatfish_test;"
+  ```
+
+  La otra opción es `docker compose down -v` y luego `docker compose up -d`, pero **borra el volumen y todos los datos
+  locales** de `fatfish`.
 - La API corre con `./mvnw spring-boot:run` y su documentación queda en <http://localhost:8080/swagger-ui.html>.
 - Las credenciales y la llave de la API van en variables de entorno o en un archivo `.env`, que **nunca** se sube.
 
