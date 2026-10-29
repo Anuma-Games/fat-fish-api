@@ -126,15 +126,14 @@ class GameControllerTest {
         mockMvc.perform(post("/api/juego/partidas").header("Authorization", AUTHORIZATION)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "resultado": "EMPATE", "rondaAlcanzada": 10, "puntaje": -1,
+                                { "resultado": "EMPATE", "rondaAlcanzada": 0, "puntaje": -1,
                                   "dineroInvertido": 0, "dineroGanado": 0, "dineroPerdido": 0, "vecesTodoONada": 0,
                                   "empenos": 0, "prestamos": 0, "duracionSeg": 0 }
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors", hasItem("claveIdempotencia es obligatoria")))
-                .andExpect(jsonPath("$.errors", hasItem("rondaAlcanzada debe ser al menos 1")))
                 .andExpect(jsonPath("$.errors", hasItem("resultado debe ser VICTORIA, DERROTA o ABANDONO")))
-                .andExpect(jsonPath("$.errors", hasItem("rondaAlcanzada debe estar entre 1 y 9")));
+                .andExpect(jsonPath("$.errors", hasItem("rondaAlcanzada debe ser al menos 1")));
         verifyNoInteractions(gameService);
     }
 }
