@@ -132,6 +132,7 @@ class GameControllerTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors", hasItem("claveIdempotencia es obligatoria")))
+                .andExpect(jsonPath("$.errors", hasItem("rondaAlcanzada debe ser al menos 1")))
                 .andExpect(jsonPath("$.errors", hasItem("resultado debe ser VICTORIA, DERROTA o ABANDONO")))
                 .andExpect(jsonPath("$.errors", hasItem("rondaAlcanzada debe estar entre 1 y 9")));
         verifyNoInteractions(gameService);
