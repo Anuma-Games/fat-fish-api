@@ -18,10 +18,14 @@ public class OpenApiConfig {
                         .version("v1")
                         .description("API del videojuego Fat Fish (IDGS101N, UTCH): registro de jugadores y partidas "
                                 + "desde el juego, y consultas e inserciones de la PWA."))
-                .components(new Components().addSecuritySchemes("apiKey", new SecurityScheme()
-                        .type(SecurityScheme.Type.APIKEY)
-                        .in(SecurityScheme.In.HEADER)
-                        .name("X-Api-Key")))
-                .addSecurityItem(new SecurityRequirement().addList("apiKey"));
+                .components(new Components()
+                        .addSecuritySchemes("apiKey", new SecurityScheme()
+                                .type(SecurityScheme.Type.APIKEY)
+                                .in(SecurityScheme.In.HEADER)
+                                .name("X-Api-Key"))
+                        .addSecuritySchemes("bearerAuth", new SecurityScheme()
+                                .type(SecurityScheme.Type.HTTP)
+                                .scheme("bearer")))
+                .addSecurityItem(new SecurityRequirement().addList("apiKey").addList("bearerAuth"));
     }
 }
