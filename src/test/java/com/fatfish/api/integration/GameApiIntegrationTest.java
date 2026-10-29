@@ -81,6 +81,23 @@ class GameApiIntegrationTest {
     }
 
     @Test
+    void storesAMatchBeyondRoundNineAndRejectsRoundZero() throws Exception {
+        String token = register("andrik");
+        String beyondNine = match(1, "DERROTA", 900, "[]").replace("\"rondaAlcanzada\": 5", "\"rondaAlcanzada\": 12");
+        String roundZero = match(2, "DERROTA", 900, "[]").replace("\"rondaAlcanzada\": 5", "\"rondaAlcanzada\": 0");
+
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(beyondNine))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(roundZero))
+                .andExpect(status().isBadRequest());
+
+        assertThat(jdbc.queryForObject("SELECT ronda_alcanzada FROM partida", Integer.class)).isEqualTo(12);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM partida", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     void countsTheLosingStreakInTheOrderTheMatchesWerePlayed() throws Exception {
         String token = register("andrik");
 

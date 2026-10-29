@@ -93,7 +93,15 @@ class GameControllerTest {
                 .andExpect(header().string("Location", "/api/juego/partidas/12"))
                 .andExpect(jsonPath("$.claveIdempotencia").value("3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13"));
     }
+    @Test
+    void acceptsAMatchBeyondRoundNine() throws Exception {
+        when(gameService.recordMatch(eq(AUTHORIZATION), any())).thenReturn(new MatchResult(STORED, true));
 
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", AUTHORIZATION)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_MATCH.replace("\"rondaAlcanzada\": 4", "\"rondaAlcanzada\": 12")))
+                .andExpect(status().isCreated());
+    }
     @Test
     void returnsTheStoredMatchForARepeatedKey() throws Exception {
         when(gameService.recordMatch(eq(AUTHORIZATION), any())).thenReturn(new MatchResult(STORED, false));
