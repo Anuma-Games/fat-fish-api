@@ -58,7 +58,7 @@ public class GameController {
             description = "Requiere Authorization: Bearer <token>. No pide la contraseña anterior: sirve para "
                     + "recuperar la cuenta desde el dispositivo que tiene el token.")
     public void changePassword(
-            @Parameter(description = "Bearer <token>")
+            @Parameter(hidden = true)
             @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authorization,
             @Valid @RequestBody ChangePasswordRequest request) {
         gameService.changePassword(authorization, request);
@@ -70,7 +70,7 @@ public class GameController {
                     + "estadísticas del jugador. Si la claveIdempotencia ya existe, responde 200 con la partida "
                     + "guardada y no inserta un duplicado.")
     public ResponseEntity<MatchResponse> recordMatch(
-            @Parameter(description = "Bearer <token>")
+            @Parameter(hidden = true)
             @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authorization,
             @Valid @RequestBody MatchRequest request) {
         MatchResult result = gameService.recordMatch(authorization, request);
