@@ -294,7 +294,7 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
   `{ "id": "12", "claveIdempotencia": "…", "creadaEn": "…" }`. Como la clave es única por partida y no un contador,
   las partidas de una misma cuenta en varios dispositivos no se pisan.
 - `terminadaEn`: fecha en que el juego terminó la partida; el historial de la PWA la muestra y la ordena con ella.
-- `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: de 1 a 9; montos y contadores no negativos.
+- `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: 1 o más (sin límite superior, las rondas son infinitas); montos y contadores no negativos.
 - `comodines` es opcional. `comodinId` es el `id` de la tabla `comodin` (1 a 4) y no se puede repetir.
 - Al guardar la partida, la API recalcula `estadistica_jugador` con todas las partidas del jugador en el orden de
   `terminadaEn`, así la racha de derrotas es correcta aunque una partida jugada sin conexión llegue tarde.
@@ -382,7 +382,8 @@ API responde `200` con `created` en `false` y no inserta un duplicado. La encues
 ## Modelo de datos
 
 `V1__esquema_inicial.sql` crea las tablas y carga el catálogo de comodines; `V2__partida_clave_idempotencia.sql`
-cambia el contador local de `partida` por la clave UUID de cada partida y agrega `terminada_en`.
+cambia el contador local de `partida` por la clave UUID de cada partida y agrega `terminada_en`;
+`V3__ronda_sin_limite.sql` cambia el check de `ronda_alcanzada` a `>= 1` para aceptar partidas que pasan de la ronda 9.
 
 > **Las migraciones que ya están en `main` no se editan.** Flyway compara su contenido con el que ya aplicó y la API
 > no arranca si cambió. Cualquier cambio al esquema va en una migración nueva (`V3__…`, `V4__…`), que Flyway aplica

@@ -1,7 +1,6 @@
 package com.fatfish.api.dto.juego;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -25,8 +24,7 @@ public record MatchRequest(
         String resultado,
 
         @NotNull(message = "rondaAlcanzada es obligatoria")
-        @Min(value = 1, message = "rondaAlcanzada debe estar entre 1 y 9")
-        @Max(value = 9, message = "rondaAlcanzada debe estar entre 1 y 9")
+        @Min(value = 1, message = "rondaAlcanzada debe ser al menos 1")
         Integer rondaAlcanzada,
 
         @NotNull(message = "puntaje es obligatorio")
