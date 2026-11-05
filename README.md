@@ -218,8 +218,18 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish_test ./mvnw test
 
 | Tipo | Clases | Qué cubren |
 |---|---|---|
+| Unitarias del servicio (JUnit 5 y Mockito) | `PwaServiceTest` | `findAllFeedback` y `createFeedback` de `PwaService`, con `FeedbackRepository` simulado |
 | Controller (MockMvc) | `GameControllerTest`, `PwaControllerTest` | Códigos HTTP, JSON, validaciones y mensajes de error |
 | Integración (PostgreSQL) | `GameApiIntegrationTest`, `PwaApiIntegrationTest` | Registro y token, partida reenviada sin duplicados, estadísticas, comodines, perfil, historial y retroalimentación |
+
+En `PwaService` los métodos de findAll y create se llaman `findAllFeedback()` y `createFeedback()`, no `findAll()` y
+`save()` como en el ejemplo de la práctica. El servicio maneja varias tablas (jugadores, partidas, ranking,
+retroalimentación y encuestas), y un `findAll()` sin más no diría qué lista devuelve. Las pruebas conservan los nombres
+de la práctica: `testFindAllFeedback` y `testCreateFeedback`.
+
+Ejecución de `mvn test` con las 48 pruebas en verde:
+
+![Ejecución exitosa de mvn test](docs/pruebas/mvn-test.png)
 
 Para generar el `.jar` (queda en `target/fat-fish-api.jar`):
 

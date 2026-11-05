@@ -109,7 +109,7 @@ public class PwaService {
     public PwaPage<MatchDto> getMatches(long playerId, int page, int size) {
         findPlayer(playerId);
         PageRequest pageRequest = PageRequest.of(page, size,
-                Sort.by(Sort.Order.desc("finishedAt"), Sort.Order.desc("id")));
+                Sort.by(Sort.Order.desc(Match::getFinishedAt), Sort.Order.desc(Match::getId)));
         return PwaPage.from(matchRepository.findByPlayerId(playerId, pageRequest), PwaService::toMatch);
     }
 
@@ -133,6 +133,12 @@ public class PwaService {
         PwaPage<RankingEntryDto> ranking = new PwaPage<>(
                 entries, page, size, total, totalPages, page + 1 >= totalPages, Instant.now());
         return new RankingDto(ranking, playerId == null ? null : findPosition(playerId));
+    }
+
+    /** All the feedback sent from the PWA, as stored in the table retroalimentacion. */
+    @Transactional(readOnly = true)
+    public List<Feedback> findAllFeedback() {
+        return feedbackRepository.findAll();
     }
 
     /**
