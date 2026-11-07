@@ -3,8 +3,8 @@
 -- No es una migración de Flyway: se corre a mano con psql, después de 01_limpiar.sql.
 -- Todos los alias y el dinero son ficticios.
 --
--- Ids fijos para poder borrar solo estos datos con 01_limpiar.sql:
---   jugador 1 a 28, partida 1 a 107, retroalimentacion 1 a 6, encuesta 1 a 8.
+-- Ids fijos (jugador 1 a 28, partida 1 a 107, retroalimentacion 1 a 6, encuesta 1 a 8). 01_limpiar.sql los
+-- reconoce por el id y por una marca: el hash de la contraseña de los jugadores y la fecha de los demás.
 -- Si se corre dos veces sin limpiar, falla por id repetido y no carga nada (todo va en una transacción).
 
 begin;
