@@ -29,6 +29,7 @@ src/main/java/com/fatfish/api
 ├── exception    # Manejo de errores (Problem Details, mensajes en español)
 └── config       # Configuración de OpenAPI
 src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql, V2__…)
+sql/demo                          # Datos de demostración (se cargan a mano, no con Flyway)
 docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
@@ -179,6 +180,9 @@ DB_USER=<usuario>
 DB_PASSWORD=<contraseña>
 ```
 
+> `docker compose` también lee el `.env` de la raíz y tomaría `DB_USER` y `DB_PASSWORD` de Cloud SQL para crear el
+> contenedor local. Si tienes este archivo, levanta Docker con `docker compose --env-file /dev/null up -d`.
+
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=gcp
 ```
@@ -237,6 +241,39 @@ Para generar el `.jar` (queda en `target/fat-fish-api.jar`):
 ./mvnw package -DskipTests
 java -jar target/fat-fish-api.jar
 ```
+
+## 5. Datos de demostración
+
+`sql/demo` tiene un juego de datos ficticio para mostrar la PWA con contenido creíble: 28 jugadores, 107 partidas,
+comodines, 6 retroalimentaciones y 8 encuestas. Es el mismo que usa el laboratorio de pruebas de la PWA: en el
+repositorio `fat-fish-pwa`, `docs/laboratorio-pruebas/sql/02_carga.sql` es una copia de `02_cargar.sql`. Si cambias
+uno, cambia el otro.
+
+No son migraciones de Flyway: Flyway corre cada migración una sola vez y en todas las bases, incluida la de las
+pruebas. Estos scripts se corren a mano con `psql` y solo donde se quieran los datos.
+
+| Script | Cuándo |
+|---|---|
+| `01_limpiar.sql` | Borra solo los datos de demostración: id en su rango (jugador 1 a 28, retroalimentacion 1 a 6, encuesta 1 a 8) **y** su marca (el hash fijo de la contraseña o la fecha exacta). Los datos reales no se tocan aunque tengan esos id |
+| `02_cargar.sql` | Carga los datos de demostración; si ya están, falla sin cambiar nada (todo va en una transacción) |
+
+Las cuentas tienen una contraseña aleatoria que nadie conoce y tokens aleatorios, así que nadie puede iniciar sesión
+con ellas ni enviar partidas a su nombre. Al final, cada secuencia se mueve al id más alto de su tabla: el siguiente
+jugador que se registre será el 29. Si en una base ya hay jugadores reales con id del 1 al 28, `02_cargar.sql`
+falla por id repetido y no cambia nada.
+
+Con los datos del `.env` del perfil `gcp`:
+
+```bash
+set -a; source .env; set +a
+export PGPASSWORD="$DB_PASSWORD"
+psql "host=$DB_HOST dbname=$DB_NAME user=$DB_USER sslmode=require" -v ON_ERROR_STOP=1 -f sql/demo/01_limpiar.sql
+psql "host=$DB_HOST dbname=$DB_NAME user=$DB_USER sslmode=require" -v ON_ERROR_STOP=1 -f sql/demo/02_cargar.sql
+unset PGPASSWORD
+```
+
+En local son los mismos dos comandos con `psql -U fatfish -h localhost -d fatfish`. Cuando ya haya jugadores reales,
+saca un respaldo de Cloud SQL antes de correr cualquiera de estos scripts.
 
 ## Endpoints
 
