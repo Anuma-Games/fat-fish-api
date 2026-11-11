@@ -1,13 +1,41 @@
-# Fat Fish API
+# Fat Fish – API del videojuego
 
 [![CI](https://github.com/Anuma-Games/fat-fish-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Anuma-Games/fat-fish-api/actions/workflows/ci.yml)
 
-Prototipo del backend del videojuego **Fat Fish** (proyecto integrador, grupo IDGS101N, UTCH).
+<!--suppress HtmlDeprecatedAttribute --><p align="center"><img src="docs/img/logo.png" alt="Logo de Fat Fish" width="160"></p>
+
+Backend del proyecto integrador **Fat Fish**, del equipo Anuma Games (IDGS101N, Universidad Tecnológica de Chihuahua).
+La consumen el [juego](https://github.com/Anuma-Games/fat-fish-game),
+la [PWA](https://github.com/Anuma-Games/fat-fish-pwa)
+y la [app móvil](https://github.com/Anuma-Games/fat-fish-mobile).
 
 El juego registra al jugador, guarda cada partida en su equipo (local first) y la envía a esta API
 cuando hay conexión. La API guarda cada partida una sola vez, actualiza las estadísticas del jugador
 y expone su perfil, historial, ranking mundial y búsqueda de jugadores para la PWA y la app móvil, que también
 envía retroalimentación y la encuesta anónima.
+
+## Contenido
+
+- [Tecnologías](#tecnologías)
+- [Estructura](#estructura)
+- [Requisitos](#requisitos)
+- [Uso de la API en Cloud Run](#uso-de-la-api-en-cloud-run)
+    - [Qué se necesita](#qué-se-necesita)
+    - [Primera prueba](#primera-prueba)
+    - [Errores](#errores)
+    - [Seguridad: límites y bloqueo](#seguridad-límites-y-bloqueo)
+    - [Configuración en Cloud Run](#configuración-en-cloud-run)
+- [1. Levantar PostgreSQL con Docker Compose](#1-levantar-postgresql-con-docker-compose)
+- [2. Correr la aplicación](#2-correr-la-aplicación)
+- [3. Documentación (Swagger)](#3-documentación-swagger)
+- [4. Correr las pruebas](#4-correr-las-pruebas)
+- [5. Datos de demostración](#5-datos-de-demostración)
+- [Endpoints](#endpoints)
+- [Modelo de datos](#modelo-de-datos)
+- [Integración continua](#integración-continua)
+- [Equipo](#equipo)
+
+---
 
 ## Tecnologías
 
@@ -22,12 +50,12 @@ envía retroalimentación y la encuesta anónima.
 ```
 src/main/java/com/fatfish/api
 ├── controller   # Endpoints REST (/api/juego y /api/pwa)
-├── service      # Reglas de negocio: token, idempotencia, estadísticas
+├── service      # Reglas de negocio: token, idempotencia, estadísticas, bloqueo de sesión
 ├── repository   # Spring Data JPA
 ├── model        # Entidades JPA
 ├── dto          # Contrato JSON del juego (dto/juego) y de la PWA (dto/pwa)
 ├── exception    # Manejo de errores (Problem Details, mensajes en español)
-└── config       # Configuración de OpenAPI
+└── config       # OpenAPI, llave de la API y límite de peticiones
 src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql, V2__…)
 sql/demo                          # Datos de demostración (se cargan a mano, no con Flyway)
 docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
@@ -49,24 +77,24 @@ configuración, no la escriben en el código.
 
 ### Qué se necesita
 
-| Control | Qué es | Cabecera |
-|---|---|---|
-| **Llave de la API** | Secreto compartido del equipo. Se pide al responsable de la API; **nunca se sube a Git** | `X-Api-Key: <llave>` |
-| **Token del jugador** | Lo entrega `registro` o `sesion` y autoriza escribir partidas | `Authorization: Bearer <token>` |
+| Control               | Qué es                                                                                                                                                    | Cabecera                        |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------|
+| **Llave de la API**   | Identifica a la aplicación que llama. **Es pública por diseño** (la PWA la envía desde el navegador); se pide al responsable de la API y no se sube a Git | `X-Api-Key: <llave>`            |
+| **Token del jugador** | Lo entrega `registro` o `sesion` y autoriza escribir partidas                                                                                             | `Authorization: Bearer <token>` |
 
-| Endpoint | Llave | Token | Éxito | Errores |
-|---|:---:|:---:|---|---|
-| `POST /api/juego/registro` | Sí | No | `201` | `400` |
-| `POST /api/juego/sesion` | Sí | No (id y contraseña) | `200` | `400`, `401` |
-| `PUT /api/juego/contrasena` | Sí | Sí | `204` | `400`, `401` |
-| `POST /api/juego/partidas` | Sí | Sí | `201` (`200` si ya existía) | `400`, `401` |
-| `GET /api/pwa/jugadores?busqueda=` | Sí | No | `200` (lista vacía si no hay coincidencias) | `400` |
-| `GET /api/pwa/perfil?id=` | Sí | No | `200` | `400`, `404` |
-| `GET /api/pwa/partidas?id=` | Sí | No | `200` | `400`, `404` |
-| `GET /api/pwa/ranking` | Sí | No | `200` | `400` |
-| `POST /api/pwa/retroalimentacion` | Sí | No | `201` (`200` si ya existía) | `400` |
-| `POST /api/pwa/encuesta` | Sí | No | `201` (`200` si ya existía) | `400` |
-| `GET /actuator/health` | No | No | `200` | |
+| Endpoint                           | Llave |        Token         | Éxito                                       | Errores             |
+|------------------------------------|:-----:|:--------------------:|---------------------------------------------|---------------------|
+| `POST /api/juego/registro`         |  Sí   |          No          | `201`                                       | `400`, `429`        |
+| `POST /api/juego/sesion`           |  Sí   | No (id y contraseña) | `200`                                       | `400`, `401`, `429` |
+| `PUT /api/juego/contrasena`        |  Sí   |          Sí          | `204`                                       | `400`, `401`        |
+| `POST /api/juego/partidas`         |  Sí   |          Sí          | `201` (`200` si ya existía)                 | `400`, `401`        |
+| `GET /api/pwa/jugadores?busqueda=` |  Sí   |          No          | `200` (lista vacía si no hay coincidencias) | `400`               |
+| `GET /api/pwa/perfil?id=`          |  Sí   |          No          | `200`                                       | `400`, `404`        |
+| `GET /api/pwa/partidas?id=`        |  Sí   |          No          | `200`                                       | `400`, `404`        |
+| `GET /api/pwa/ranking`             |  Sí   |          No          | `200`                                       | `400`               |
+| `POST /api/pwa/retroalimentacion`  |  Sí   |          No          | `201` (`200` si ya existía)                 | `400`, `429`        |
+| `POST /api/pwa/encuesta`           |  Sí   |          No          | `201` (`200` si ya existía)                 | `400`, `429`        |
+| `GET /actuator/health`             |  No   |          No          | `200`                                       |                     |
 
 ### Primera prueba
 
@@ -85,13 +113,37 @@ En PowerShell usa `curl.exe`. En Postman, define `X-Api-Key: {{apiKey}}` a nivel
 
 Formato Problem Details (RFC 9457), en español.
 
-| Código | Qué hacer |
-|---|---|
-| `400` | Corregir el cuerpo (`errors` lista los campos). No reintentar igual |
-| `401` | Token ausente, inválido o reemplazado: pedir `POST /api/juego/sesion` |
-| `403` | Falta la llave o es inválida. **No pedir al jugador iniciar sesión** |
-| `404` | El jugador no existe |
-| `5xx` o red | Reintentar con espera creciente y la misma clave de idempotencia |
+| Código      | Qué hacer                                                                                                                                                    |
+|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `400`       | Corregir el cuerpo (`errors` lista los campos). No reintentar igual                                                                                          |
+| `401`       | Token ausente, inválido o reemplazado: pedir `POST /api/juego/sesion`. En `sesion`, contraseña incorrecta o jugador bloqueado (misma respuesta, a propósito) |
+| `403`       | Falta la llave o es inválida. **No pedir al jugador iniciar sesión**                                                                                         |
+| `404`       | El jugador no existe                                                                                                                                         |
+| `429`       | Límite de peticiones de la IP. Esperar los segundos de `Retry-After` y reintentar                                                                            |
+| `5xx` o red | Reintentar con espera creciente y la misma clave de idempotencia                                                                                             |
+
+### Seguridad: límites y bloqueo
+
+La llave no protege los datos. Los protege el token del jugador y, en los endpoints sin token, estas dos medidas:
+
+| Medida                                      | Dónde                             | Valor por defecto                          | Propiedad                                                  |
+|---------------------------------------------|-----------------------------------|--------------------------------------------|------------------------------------------------------------|
+| Límite por IP (`RateLimitFilter`)           | `POST /api/juego/registro`        | 5 por hora                                 | `fatfish.security.rate-limit.register-per-hour`            |
+|                                             | `POST /api/juego/sesion`          | 10 por minuto                              | `fatfish.security.rate-limit.login-per-minute`             |
+|                                             | `POST /api/pwa/retroalimentacion` | 10 por minuto                              | `fatfish.security.rate-limit.feedback-per-minute`          |
+|                                             | `POST /api/pwa/encuesta`          | 10 por minuto                              | `fatfish.security.rate-limit.survey-per-minute`            |
+| Bloqueo por jugador (`LoginAttemptService`) | `POST /api/juego/sesion`          | 5 fallos en 15 minutos bloquean 15 minutos | `fatfish.security.login-lockout.max-attempts` y `.minutes` |
+
+- Se encienden con `fatfish.security.rate-limit.enabled` y `fatfish.security.login-lockout.enabled`. Están apagados
+  por defecto (local y CI) y encendidos en el perfil `cloudrun`.
+- Al pasarse del límite responde `429` con `Retry-After`. Un jugador bloqueado recibe el mismo `401` que una
+  contraseña incorrecta, aunque la contraseña sea correcta. Los ids que no existen también se cuentan.
+- La IP es la **última** entrada de `X-Forwarded-For`: Cloud Run agrega ahí la IP real, y lo anterior lo puede
+  escribir el cliente.
+- Los contadores viven en memoria: se pierden al desplegar y no se comparten entre instancias. Cloud Run debe tener
+  **máximo 1 instancia**.
+- Cualquiera que conozca el id de un jugador puede bloquear su inicio de sesión 15 minutos. Se acepta en el MVP: el
+  juego funciona sin sesión y el token del dispositivo sigue sirviendo.
 
 ### Configuración en Cloud Run
 
@@ -99,13 +151,13 @@ La API corre en Cloud Run con el perfil `cloudrun` y se conecta a Cloud SQL con 
 autorizadas. La contraseña de la base y la llave de la API se guardan en Secret Manager y llegan como variables de
 entorno; nunca se escriben en el repositorio.
 
-| Variable | Uso |
-|---|---|
-| `SPRING_PROFILES_ACTIVE` | `cloudrun`: pool de conexiones pequeño, Flyway activo, URLs `https` en Swagger y apagado ordenado |
-| `DB_URL` | Conexión por el conector: `jdbc:postgresql:///fatfish?cloudSqlInstance=<proyecto>:<región>:<instancia>&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
-| `DB_USER` y `DB_PASSWORD` | Usuario y contraseña de la base (la contraseña, desde Secret Manager) |
-| `FATFISH_SECURITY_API_KEY` | Llave que se compara con la cabecera `X-Api-Key` (desde Secret Manager). Si está vacía, el filtro queda apagado |
-| `FATFISH_SECURITY_API_KEY_REQUIRED` | Con `true`, la aplicación no arranca si falta la llave, para no quedar abierta por error |
+| Variable                            | Uso                                                                                                                                                               |
+|-------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SPRING_PROFILES_ACTIVE`            | `cloudrun`: pool de conexiones pequeño, Flyway activo, URLs `https` en Swagger y apagado ordenado                                                                 |
+| `DB_URL`                            | Conexión por el conector: `jdbc:postgresql:///fatfish?cloudSqlInstance=<proyecto>:<región>:<instancia>&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
+| `DB_USER` y `DB_PASSWORD`           | Usuario y contraseña de la base (la contraseña, desde Secret Manager)                                                                                             |
+| `FATFISH_SECURITY_API_KEY`          | Llave que se compara con la cabecera `X-Api-Key` (desde Secret Manager). Si está vacía, el filtro queda apagado                                                   |
+| `FATFISH_SECURITY_API_KEY_REQUIRED` | Con `true`, la aplicación no arranca si falta la llave, para no quedar abierta por error                                                                          |
 
 El perfil `cloudrun` es para la API publicada. Para trabajar desde tu computadora contra la base de la nube se usa el
 perfil `gcp` (sección 2).
@@ -118,12 +170,12 @@ docker compose up -d
 
 Crea el contenedor `fatfish-postgres` con:
 
-| Variable | Valor por defecto |
-|---|---|
+| Variable      | Valor por defecto                             |
+|---------------|-----------------------------------------------|
 | Base de datos | `fatfish` (y `fatfish_test` para las pruebas) |
-| `DB_USER` | `fatfish` |
-| `DB_PASSWORD` | `fatfish` |
-| `DB_PORT` | `5432` |
+| `DB_USER`     | `fatfish`                                     |
+| `DB_PASSWORD` | `fatfish`                                     |
+| `DB_PORT`     | `5432`                                        |
 
 Los valores se pueden cambiar con variables de entorno o con un archivo `.env` (no se sube al repositorio).
 Si ya tienes otro PostgreSQL en el puerto 5432, usa otro puerto:
@@ -155,6 +207,22 @@ sin la cabecera `X-Api-Key: mi-llave` responden `403`:
 
 ```bash
 FATFISH_SECURITY_API_KEY=mi-llave ./mvnw spring-boot:run
+```
+
+El límite de peticiones y el bloqueo de sesión también están apagados en local. Para probarlos:
+
+```bash
+FATFISH_SECURITY_RATE_LIMIT_ENABLED=true FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED=true ./mvnw spring-boot:run
+```
+
+La IP se simula con `X-Forwarded-For`. La sexta petición de una IP responde `429`:
+
+```bash
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:8080/api/juego/registro \
+    -H "X-Forwarded-For: 10.0.0.1" -H "Content-Type: application/json" \
+    -d '{ "alias": "andrik", "contrasena": "pez-gordo-2026" }'
+done
 ```
 
 > **Si tu base local se creó antes de FF-51** (esquema con `players` y `runs`), la API no arranca porque la migración
@@ -220,11 +288,13 @@ Si Postgres está en otro puerto:
 DB_URL=jdbc:postgresql://localhost:5433/fatfish_test ./mvnw test
 ```
 
-| Tipo | Clases | Qué cubren |
-|---|---|---|
-| Unitarias del servicio (JUnit 5 y Mockito) | `PwaServiceTest` | `findAllFeedback` y `createFeedback` de `PwaService`, con `FeedbackRepository` simulado |
-| Controller (MockMvc) | `GameControllerTest`, `PwaControllerTest` | Códigos HTTP, JSON, validaciones y mensajes de error |
-| Integración (PostgreSQL) | `GameApiIntegrationTest`, `PwaApiIntegrationTest` | Registro y token, partida reenviada sin duplicados, estadísticas, comodines, perfil, historial y retroalimentación |
+| Tipo                                       | Clases                                                               | Qué cubren                                                                                                         |
+|--------------------------------------------|----------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| Unitarias del servicio (JUnit 5 y Mockito) | `PwaServiceTest`                                                     | `findAllFeedback` y `createFeedback` de `PwaService`, con `FeedbackRepository` simulado                            |
+| Controller (MockMvc)                       | `GameControllerTest`, `PwaControllerTest`                            | Códigos HTTP, JSON, validaciones y mensajes de error                                                               |
+| Unitarias de seguridad                     | `ApiKeyFilterTest`, `RateLimitFilterTest`, `LoginAttemptServiceTest` | Llave de la API, límite por IP (incluye `X-Forwarded-For` falsificado) y bloqueo de sesión                         |
+| Integración (PostgreSQL)                   | `GameApiIntegrationTest`, `PwaApiIntegrationTest`                    | Registro y token, partida reenviada sin duplicados, estadísticas, comodines, perfil, historial y retroalimentación |
+| Integración (PostgreSQL)                   | `SecurityLimitsIntegrationTest`                                      | Con los límites encendidos: `429` en los cuatro endpoints sin token, bloqueo de `/sesion` y `/partidas` sin límite |
 
 En `PwaService` los métodos de findAll y create se llaman `findAllFeedback()` y `createFeedback()`, no `findAll()` y
 `save()` como en el ejemplo de la práctica. El servicio maneja varias tablas (jugadores, partidas, ranking,
@@ -252,10 +322,10 @@ uno, cambia el otro.
 No son migraciones de Flyway: Flyway corre cada migración una sola vez y en todas las bases, incluida la de las
 pruebas. Estos scripts se corren a mano con `psql` y solo donde se quieran los datos.
 
-| Script | Cuándo |
-|---|---|
+| Script           | Cuándo                                                                                                                                                                                                                              |
+|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `01_limpiar.sql` | Borra solo los datos de demostración: id en su rango (jugador 1 a 28, retroalimentacion 1 a 6, encuesta 1 a 8) **y** su marca (el hash fijo de la contraseña o la fecha exacta). Los datos reales no se tocan aunque tengan esos id |
-| `02_cargar.sql` | Carga los datos de demostración; si ya están, falla sin cambiar nada (todo va en una transacción) |
+| `02_cargar.sql`  | Carga los datos de demostración; si ya están, falla sin cambiar nada (todo va en una transacción)                                                                                                                                   |
 
 Las cuentas tienen una contraseña aleatoria que nadie conoce y tokens aleatorios, así que nadie puede iniciar sesión
 con ellas ni enviar partidas a su nombre. Al final, cada secuencia se mueve al id más alto de su tabla: el siguiente
@@ -285,13 +355,19 @@ Crea el jugador y sus estadísticas en cero. `alias`: de 3 a 24 caracteres (se p
 `contrasena`: de 8 a 72 caracteres, se guarda con BCrypt (`jugador.contrasena_hash`).
 
 ```json
-{ "alias": "andrik", "contrasena": "pez-gordo-2026" }
+{
+  "alias": "andrik",
+  "contrasena": "pez-gordo-2026"
+}
 ```
 
 Responde `201`:
 
 ```json
-{ "jugadorId": "5", "token": "q3Zt…" }
+{
+  "jugadorId": "5",
+  "token": "q3Zt…"
+}
 ```
 
 El token solo se entrega aquí. El juego lo guarda en el dispositivo y lo envía en la cabecera
@@ -301,10 +377,14 @@ El token solo se entrega aquí. El juego lo guarda en el dispositivo y lo envía
 
 Para usar la cuenta en otro dispositivo (o si el juego perdió el token). Con el id y la contraseña responde `200`
 con un token nuevo, en el mismo formato que el registro; **el token anterior deja de funcionar**. Si el id no existe
-o la contraseña es incorrecta responde `401` con el mismo mensaje, para no revelar qué ids existen.
+o la contraseña es incorrecta responde `401` con el mismo mensaje, para no revelar qué ids existen. Lo mismo responde
+si el jugador está bloqueado por fallos (ver [Seguridad](#seguridad-límites-y-bloqueo)).
 
 ```json
-{ "jugadorId": 5, "contrasena": "pez-gordo-2026" }
+{
+  "jugadorId": 5,
+  "contrasena": "pez-gordo-2026"
+}
 ```
 
 ### `PUT /api/juego/contrasena`
@@ -313,7 +393,9 @@ Requiere `Authorization: Bearer <token>`. Cambia la contraseña sin pedir la ant
 dueño de la cuenta, así que el jugador puede recuperarla desde el dispositivo donde juega. Responde `204`.
 
 ```json
-{ "contrasenaNueva": "otra-clave-segura" }
+{
+  "contrasenaNueva": "otra-clave-segura"
+}
 ```
 
 Si el jugador pierde el dispositivo y también olvidó la contraseña, la cuenta no se puede recuperar.
@@ -324,13 +406,29 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
 
 ```json
 {
-  "claveIdempotencia": "3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13", "terminadaEn": "2026-10-16T17:40:00Z",
-  "resultado": "DERROTA", "rondaAlcanzada": 4, "puntaje": 281,
-  "dineroInvertido": 2350, "dineroGanado": 1800, "dineroPerdido": 1450,
-  "vecesTodoONada": 1, "empenos": 0, "prestamos": 1, "duracionSeg": 1301,
+  "claveIdempotencia": "3f2c9a1e-7b4d-4c8a-9e21-5d0f6a8b7c13",
+  "terminadaEn": "2026-10-16T17:40:00Z",
+  "resultado": "DERROTA",
+  "rondaAlcanzada": 4,
+  "puntaje": 281,
+  "dineroInvertido": 2350,
+  "dineroGanado": 1800,
+  "dineroPerdido": 1450,
+  "vecesTodoONada": 1,
+  "empenos": 0,
+  "prestamos": 1,
+  "duracionSeg": 1301,
   "comodines": [
-    { "comodinId": 1, "vecesComprado": 2, "vecesUsado": 5 },
-    { "comodinId": 3, "vecesComprado": 1, "vecesUsado": 0 }
+    {
+      "comodinId": 1,
+      "vecesComprado": 2,
+      "vecesUsado": 5
+    },
+    {
+      "comodinId": 3,
+      "vecesComprado": 1,
+      "vecesUsado": 0
+    }
   ]
 }
 ```
@@ -341,7 +439,8 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
   `{ "id": "12", "claveIdempotencia": "…", "creadaEn": "…" }`. Como la clave es única por partida y no un contador,
   las partidas de una misma cuenta en varios dispositivos no se pisan.
 - `terminadaEn`: fecha en que el juego terminó la partida; el historial de la PWA la muestra y la ordena con ella.
-- `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: 1 o más (sin límite superior, las rondas son infinitas); montos y contadores no negativos.
+- `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: 1 o más (sin límite superior, las rondas son
+  infinitas); montos y contadores no negativos.
 - `comodines` es opcional. `comodinId` es el `id` de la tabla `comodin` (1 a 4) y no se puede repetir.
 - Al guardar la partida, la API recalcula `estadistica_jugador` con todas las partidas del jugador en el orden de
   `terminadaEn`, así la racha de derrotas es correcta aunque una partida jugada sin conexión llegue tarde.
@@ -357,7 +456,11 @@ coincidencias responde `200` con una lista vacía.
 
 ```json
 [
-  { "jugadorId": "5", "alias": "andrik", "ultimaActividad": "2026-10-13T22:44:05Z" }
+  {
+    "jugadorId": "5",
+    "alias": "andrik",
+    "ultimaActividad": "2026-10-13T22:44:05Z"
+  }
 ]
 ```
 
@@ -375,11 +478,23 @@ se generó la respuesta, para mostrar la antigüedad de los datos cuando la PWA 
 ```json
 {
   "contenido": [
-    { "id": "8", "resultado": "VICTORIA", "rondaAlcanzada": 9, "puntaje": 1510,
-      "dineroInvertido": 9100, "dineroGanado": 11200, "dineroPerdido": 1900, "duracionSeg": 2645,
-      "creadaEn": "2026-10-13T22:00:00Z" }
+    {
+      "id": "8",
+      "resultado": "VICTORIA",
+      "rondaAlcanzada": 9,
+      "puntaje": 1510,
+      "dineroInvertido": 9100,
+      "dineroGanado": 11200,
+      "dineroPerdido": 1900,
+      "duracionSeg": 2645,
+      "creadaEn": "2026-10-13T22:00:00Z"
+    }
   ],
-  "pagina": 0, "tamano": 10, "totalElementos": 8, "totalPaginas": 1, "ultima": true,
+  "pagina": 0,
+  "tamano": 10,
+  "totalElementos": 8,
+  "totalPaginas": 1,
+  "ultima": true,
   "generadoEn": "2026-10-15T00:43:05Z"
 }
 ```
@@ -396,12 +511,28 @@ tiene victorias. `pagina` usa el mismo formato paginado que el historial de part
 {
   "pagina": {
     "contenido": [
-      { "posicion": 1, "jugadorId": "8", "alias": "gael", "puntaje": 1510, "logradoEn": "2026-10-13T22:00:00Z" }
+      {
+        "posicion": 1,
+        "jugadorId": "8",
+        "alias": "gael",
+        "puntaje": 1510,
+        "logradoEn": "2026-10-13T22:00:00Z"
+      }
     ],
-    "pagina": 0, "tamano": 10, "totalElementos": 1, "totalPaginas": 1, "ultima": true,
+    "pagina": 0,
+    "tamano": 10,
+    "totalElementos": 1,
+    "totalPaginas": 1,
+    "ultima": true,
     "generadoEn": "2026-10-15T00:43:05Z"
   },
-  "miPosicion": { "posicion": 12, "jugadorId": "5", "alias": "andrik", "puntaje": 640, "logradoEn": "2026-10-09T18:30:00Z" }
+  "miPosicion": {
+    "posicion": 12,
+    "jugadorId": "5",
+    "alias": "andrik",
+    "puntaje": 640,
+    "logradoEn": "2026-10-09T18:30:00Z"
+  }
 }
 ```
 
@@ -420,7 +551,11 @@ Guarda una encuesta anónima sobre la percepción del juego y la ludopatía. `pe
 como nulo). Responde `201`:
 
 ```json
-{ "id": "3", "created": true, "enviadaEn": "2026-10-16T20:00:00Z" }
+{
+  "id": "3",
+  "created": true,
+  "enviadaEn": "2026-10-16T20:00:00Z"
+}
 ```
 
 La cabecera opcional `Idempotency-Key` (UUID) funciona igual que en la retroalimentación: si la clave ya existe, la
@@ -442,15 +577,15 @@ cambia el contador local de `partida` por la clave UUID de cada partida y agrega
 en la PWA está en su [README](https://github.com/Anuma-Games/fat-fish-pwa#5-modelo-de-datos);
 si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 
-| Tabla | Descripción |
-|---|---|
-| `jugador` | Jugadores registrados desde el juego; `contrasena_hash` (BCrypt) y `token_hash` (SHA-256 del token) nunca salen en la API |
+| Tabla                 | Descripción                                                                                                                |
+|-----------------------|----------------------------------------------------------------------------------------------------------------------------|
+| `jugador`             | Jugadores registrados desde el juego; `contrasena_hash` (BCrypt) y `token_hash` (SHA-256 del token) nunca salen en la API  |
 | `estadistica_jugador` | Totales de cada jugador (1:1 con `jugador`); el ranking se ordena por `puntaje_maximo` y desempata con `puntaje_maximo_en` |
-| `partida` | Partidas terminadas; `clave_idempotencia` (UUID que genera el juego) es única y `terminada_en` es la fecha en que se jugó |
-| `comodin` | Catálogo de los 4 comodines del MVP |
-| `partida_comodin` | Veces que se compró y usó cada comodín en una partida |
-| `retroalimentacion` | Retroalimentación anónima de la PWA; `clave_idempotencia` es única |
-| `encuesta` | Encuesta anónima de la PWA; `clave_idempotencia` es única |
+| `partida`             | Partidas terminadas; `clave_idempotencia` (UUID que genera el juego) es única y `terminada_en` es la fecha en que se jugó  |
+| `comodin`             | Catálogo de los 4 comodines del MVP                                                                                        |
+| `partida_comodin`     | Veces que se compró y usó cada comodín en una partida                                                                      |
+| `retroalimentacion`   | Retroalimentación anónima de la PWA; `clave_idempotencia` es única                                                         |
+| `encuesta`            | Encuesta anónima de la PWA; `clave_idempotencia` es única                                                                  |
 
 ## Integración continua
 
@@ -462,8 +597,8 @@ y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
 1. Levanta un servicio `postgres:17` con healthcheck (misma versión que en local).
 2. Configura Java 21 (Temurin) con caché de Maven.
 3. `./mvnw test` (unitarias, controller e integración).
-4. Publica en el *Summary* de la ejecución una tabla con los resultados de las pruebas
-   ([`.github/scripts/test_summary.py`](.github/scripts/test_summary.py)), aunque fallen.
+4. Publica en el *Summary* de la ejecución una tabla con los resultados de las pruebas ([
+   `.github/scripts/test_summary.py`](.github/scripts/test_summary.py)), aunque fallen.
 5. `./mvnw package -DskipTests`.
 6. Sube como artefactos el `.jar` y los reportes de Surefire (estos últimos siempre, aunque fallen las pruebas).
 
@@ -479,21 +614,20 @@ Los artefactos se descargan desde la página *Summary* de cada ejecución en la 
 
 - `main`: producción. `develop`: integración. Cambios nuevos en `feature/<clave-jira>-<descripcion>`.
 - `main` y `develop` están protegidas (también para administradores):
-  - Solo se fusiona por Pull Request, con **una aprobación** de otro miembro del equipo.
-  - Los checks *Compilar y probar* y *Construir imagen Docker* deben estar en verde y la rama al día.
-  - Las conversaciones del Pull Request deben quedar resueltas.
-  - No se permite push directo, force push ni borrar la rama.
+    - Solo se fusiona por Pull Request, con **una aprobación** de otro miembro del equipo.
+    - Los checks *Compilar y probar* y *Construir imagen Docker* deben estar en verde y la rama al día.
+    - Las conversaciones del Pull Request deben quedar resueltas.
+    - No se permite push directo, force push ni borrar la rama.
 - `CODEOWNERS` asigna revisores automáticamente y la plantilla de PR pide el ticket de Jira y cómo probar el cambio.
-- Dependabot revisa cada semana las dependencias (Maven, acciones de GitHub e imagen de Docker) y abre PRs hacia `develop`.
+- Dependabot revisa cada semana las dependencias (Maven, acciones de GitHub e imagen de Docker) y abre PRs hacia
+  `develop`.
 
 ## Equipo
 
-**Anuma Games**, Proyecto integrador, grupo IDGS101N, Universidad Tecnológica de Chihuahua.
+**Anuma Games** – Proyecto integrador, grupo IDGS101N, Universidad Tecnológica de Chihuahua.
 
-| Integrante |
-|---|
-| Luis Ángel Gaxiola Gamboa |
-| Emmanuel González Hernández |
-| Jesús Antonio Jiménez Mendoza |
-| Ángel Gael Jurado Rodríguez |
-| Andrik Rivera Esquer |
+- Luis Ángel Gaxiola Gamboa
+- Emmanuel González Hernández
+- Jesús Antonio Jiménez Mendoza
+- Ángel Gael Jurado Rodríguez
+- Andrik Rivera Esquer

@@ -17,6 +17,11 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * Pide el encabezado X-Api-Key en /api/**. Sin llave configurada el filtro no hace nada (local y CI);
  * con api-key-required=true la aplicación no arranca si falta la llave, para no quedar abierta por error.
+ *
+ * <p>La llave es pública por diseño: la PWA la manda desde el navegador, así que cualquiera puede leerla en el
+ * bundle de la aplicación. Sirve para identificar al cliente, no es un secreto. La protección de los datos viene
+ * del token Bearer del jugador y, en los endpoints que no lo piden (registro, sesion, retroalimentacion y
+ * encuesta), de los límites de {@link RateLimitFilter} y del bloqueo de sesión por jugador.
  */
 @Component
 public class ApiKeyFilter extends OncePerRequestFilter {
