@@ -2,13 +2,15 @@ package com.fatfish.api.config;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletRequestWrapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +27,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final int MAX_KEYS = 10_000;
+    private static final String FORWARDED_FOR = "X-Forwarded-For";
 
     private record Rule(int limit, Duration window) {
     }
@@ -41,7 +44,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final boolean enabled;
     private final Map<String, Rule> rules;
     private final Clock clock;
-    private final Map<String, Window> windows = new HashMap<>();
+
+    /** Orden de inserción: al llenarse se descarta la ventana más antigua, nunca todas a la vez. */
+    private final Map<String, Window> windows = new LinkedHashMap<>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Window> eldest) {
+            return size() > MAX_KEYS;
+        }
+    };
 
     @Autowired
     public RateLimitFilter(
@@ -66,13 +76,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !enabled || !"POST".equals(request.getMethod()) || !rules.containsKey(request.getRequestURI());
+        return !enabled || !"POST".equals(request.getMethod()) || !rules.containsKey(path(request));
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String path = request.getRequestURI();
+        String path = path(request);
         long retryAfter = consume(clientIp(request) + " " + path, rules.get(path));
         if (retryAfter > 0) {
             response.setStatus(429);
@@ -90,15 +100,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     /** Cuenta la petición; devuelve 0 si pasa, o los segundos que faltan para que termine la ventana. */
     private synchronized long consume(String key, Rule rule) {
         Instant now = clock.instant();
-        if (windows.size() > MAX_KEYS) {
-            windows.values().removeIf(window -> !now.isBefore(window.end));
-            if (windows.size() > MAX_KEYS) {
-                windows.clear();
-            }
-        }
         Window window = windows.get(key);
         if (window == null || !now.isBefore(window.end)) {
             window = new Window(now.plus(rule.window()));
+            windows.remove(key);
             windows.put(key, window);
         }
         if (window.count < rule.limit()) {
@@ -108,11 +113,29 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return Math.max(1, (Duration.between(now, window.end).toMillis() + 999) / 1000);
     }
 
-    /** Cloud Run manda la IP del cliente en X-Forwarded-For: se toma la primera, no getRemoteAddr(). */
-    private static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
+    /**
+     * Ruta ya decodificada y sin parámetros de ruta (;x=1), igual a la que usa Spring para elegir el controlador.
+     * getRequestURI() no sirve: llega sin decodificar y X-Forwarded-Prefix le agrega un prefijo.
+     */
+    private static String path(HttpServletRequest request) {
+        String pathInfo = request.getPathInfo();
+        return request.getServletPath() + (pathInfo == null ? "" : pathInfo);
+    }
+
+    /**
+     * Cloud Run agrega la IP real del cliente al final de X-Forwarded-For; lo que va antes lo puede escribir el
+     * cliente, así que se toma la última. Se lee de la petición original porque en el perfil cloudrun
+     * ForwardedHeaderFilter oculta la cabecera y deja en getRemoteAddr() la primera IP, que es falsificable.
+     */
+    static String clientIp(HttpServletRequest request) {
+        ServletRequest original = request;
+        while (original instanceof ServletRequestWrapper wrapper) {
+            original = wrapper.getRequest();
+        }
+        String forwarded = ((HttpServletRequest) original).getHeader(FORWARDED_FOR);
         if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].strip();
+            String[] ips = forwarded.split(",");
+            return ips[ips.length - 1].strip();
         }
         return request.getRemoteAddr();
     }

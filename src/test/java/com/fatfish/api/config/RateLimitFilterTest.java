@@ -3,13 +3,24 @@ package com.fatfish.api.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fatfish.api.MutableClock;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.filter.ForwardedHeaderFilter;
 
 class RateLimitFilterTest {
+
+    /** Servlet que responde 200 a todo, para que la cadena llegue al final. */
+    private static final HttpServlet OK = new HttpServlet() {
+        @Override
+        protected void service(HttpServletRequest request, HttpServletResponse response) {
+        }
+    };
 
     private final MutableClock clock = new MutableClock();
     // registro 2 por hora; sesion, retroalimentacion y encuesta 3 por minuto
@@ -52,12 +63,23 @@ class RateLimitFilterTest {
     }
 
     @Test
-    void usesTheFirstIpOfXForwardedFor() throws Exception {
+    void usesTheLastIpOfXForwardedForSoASpoofedFirstIpDoesNotHelp() throws Exception {
         for (int i = 0; i < 3; i++) {
-            send(filter, "POST", "/api/juego/sesion", "9.9.9.9, 10.0.0.1");
+            send(filter, "POST", "/api/juego/sesion", "10.0.0." + i + ", 9.9.9.9");
         }
 
-        assertThat(send(filter, "POST", "/api/juego/sesion", "9.9.9.9, 10.0.0.2").getStatus()).isEqualTo(429);
+        assertThat(send(filter, "POST", "/api/juego/sesion", "10.0.0.99, 9.9.9.9").getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    void stillLimitsBehindForwardedHeaderFilterLikeTheCloudrunProfile() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            assertThat(sendThroughForwardedHeaderFilter("10.0.0." + i + ", 9.9.9.9", null).getStatus())
+                    .isEqualTo(200);
+        }
+
+        // Ni otra IP falsa al inicio ni un X-Forwarded-Prefix que cambie getRequestURI() evitan el límite
+        assertThat(sendThroughForwardedHeaderFilter("10.0.0.99, 9.9.9.9", "/otro").getStatus()).isEqualTo(429);
     }
 
     @Test
@@ -79,10 +101,29 @@ class RateLimitFilterTest {
 
     private static MockHttpServletResponse send(RateLimitFilter filter, String method, String path,
             String forwardedFor) throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
+        MockHttpServletRequest request = request(method, path);
         request.addHeader("X-Forwarded-For", forwardedFor);
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter.doFilter(request, response, new MockFilterChain());
         return response;
+    }
+
+    private MockHttpServletResponse sendThroughForwardedHeaderFilter(String forwardedFor, String prefix)
+            throws Exception {
+        MockHttpServletRequest request = request("POST", "/api/juego/sesion");
+        request.addHeader("X-Forwarded-For", forwardedFor);
+        if (prefix != null) {
+            request.addHeader("X-Forwarded-Prefix", prefix);
+        }
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        new MockFilterChain(OK, new ForwardedHeaderFilter(), filter).doFilter(request, response);
+        return response;
+    }
+
+    /** Como Tomcat con el DispatcherServlet en "/": la ruta completa queda en getServletPath(). */
+    private static MockHttpServletRequest request(String method, String path) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
+        request.setServletPath(path);
+        return request;
     }
 }

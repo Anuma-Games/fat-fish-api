@@ -10,18 +10,29 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Bloqueo temporal del inicio de sesión por jugador: tras varios fallos seguidos, el id queda bloqueado un
- * tiempo sin importar la IP. Cuenta también los ids que no existen, para no revelar cuáles existen. Vive en
- * memoria porque la API corre en una sola instancia. Con enabled=false nunca bloquea.
+ * Bloqueo temporal del inicio de sesión por jugador: tras varios fallos dentro de la misma ventana, el id queda
+ * bloqueado un tiempo sin importar la IP. La ventana y el bloqueo duran lo mismo. Cuenta también los ids que no
+ * existen, para no revelar cuáles existen. Vive en memoria porque la API corre en una sola instancia. Con
+ * enabled=false nunca bloquea.
  */
 @Component
 public class LoginAttemptService {
 
-    private static final int MAX_TRACKED = 10_000;
+    /** Desde este tamaño se borran las entradas vencidas; los bloqueos vigentes nunca se borran. */
+    private static final int PRUNE_THRESHOLD = 10_000;
 
     private static final class Attempts {
+        final Instant windowEnd;
         int failures;
         Instant blockedUntil;
+
+        Attempts(Instant windowEnd) {
+            this.windowEnd = windowEnd;
+        }
+
+        boolean expired(Instant now) {
+            return !now.isBefore(blockedUntil != null ? blockedUntil : windowEnd);
+        }
     }
 
     private final boolean enabled;
@@ -47,27 +58,24 @@ public class LoginAttemptService {
 
     public synchronized boolean isBlocked(long playerId) {
         Attempts found = attempts.get(playerId);
-        if (found == null || found.blockedUntil == null) {
-            return false;
-        }
-        if (clock.instant().isBefore(found.blockedUntil)) {
-            return true;
-        }
-        attempts.remove(playerId);
-        return false;
+        return found != null && found.blockedUntil != null && clock.instant().isBefore(found.blockedUntil);
     }
 
     public synchronized void recordFailure(long playerId) {
         if (!enabled) {
             return;
         }
-        if (attempts.size() >= MAX_TRACKED) {
-            attempts.clear();
+        Instant now = clock.instant();
+        if (attempts.size() >= PRUNE_THRESHOLD) {
+            attempts.values().removeIf(entry -> entry.expired(now));
         }
-        Attempts found = attempts.computeIfAbsent(playerId, id -> new Attempts());
+        Attempts found = attempts.get(playerId);
+        if (found == null || found.expired(now)) {
+            found = new Attempts(now.plus(blockDuration));
+            attempts.put(playerId, found);
+        }
         if (++found.failures >= maxAttempts) {
-            found.failures = 0;
-            found.blockedUntil = clock.instant().plus(blockDuration);
+            found.blockedUntil = now.plus(blockDuration);
         }
     }
 

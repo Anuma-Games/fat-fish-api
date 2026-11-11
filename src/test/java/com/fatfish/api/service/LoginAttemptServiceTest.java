@@ -50,6 +50,29 @@ class LoginAttemptServiceTest {
     }
 
     @Test
+    void failuresOutsideTheWindowDoNotAddUp() {
+        service.recordFailure(1);
+        service.recordFailure(1);
+        clock.advance(Duration.ofMinutes(16));
+        service.recordFailure(1);
+
+        assertThat(service.isBlocked(1)).isFalse();
+    }
+
+    @Test
+    void manyOtherIdsDoNotRemoveAnActiveBlock() {
+        for (int i = 0; i < 3; i++) {
+            service.recordFailure(1);
+        }
+
+        for (long id = 2; id < 20_000; id++) {
+            service.recordFailure(id);
+        }
+
+        assertThat(service.isBlocked(1)).isTrue();
+    }
+
+    @Test
     void neverBlocksWhenDisabled() {
         LoginAttemptService disabled = new LoginAttemptService(false, 3, 15, clock);
 
