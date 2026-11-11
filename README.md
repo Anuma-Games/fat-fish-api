@@ -22,14 +22,13 @@ envía retroalimentación y la encuesta anónima.
 ```
 src/main/java/com/fatfish/api
 ├── controller   # Endpoints REST (/api/juego y /api/pwa)
-├── service      # Reglas de negocio: token, idempotencia, estadísticas
+├── service      # Reglas de negocio: token, idempotencia, estadísticas, bloqueo de sesión
 ├── repository   # Spring Data JPA
 ├── model        # Entidades JPA
 ├── dto          # Contrato JSON del juego (dto/juego) y de la PWA (dto/pwa)
 ├── exception    # Manejo de errores (Problem Details, mensajes en español)
-└── config       # Configuración de OpenAPI
+└── config       # OpenAPI, llave de la API (ApiKeyFilter) y límite de peticiones (RateLimitFilter)
 src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql, V2__…)
-sql/demo                          # Datos de demostración (se cargan a mano, no con Flyway)
 docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
@@ -51,21 +50,21 @@ configuración, no la escriben en el código.
 
 | Control | Qué es | Cabecera |
 |---|---|---|
-| **Llave de la API** | Secreto compartido del equipo. Se pide al responsable de la API; **nunca se sube a Git** | `X-Api-Key: <llave>` |
+| **Llave de la API** | Identifica a la aplicación que llama (juego, PWA). **Es pública por diseño**: la PWA la envía desde el navegador (ver [Seguridad](#seguridad-la-llave-es-pública-límites-y-bloqueo)). Se pide al responsable de la API y no se sube a Git | `X-Api-Key: <llave>` |
 | **Token del jugador** | Lo entrega `registro` o `sesion` y autoriza escribir partidas | `Authorization: Bearer <token>` |
 
 | Endpoint | Llave | Token | Éxito | Errores |
 |---|:---:|:---:|---|---|
-| `POST /api/juego/registro` | Sí | No | `201` | `400` |
-| `POST /api/juego/sesion` | Sí | No (id y contraseña) | `200` | `400`, `401` |
+| `POST /api/juego/registro` | Sí | No | `201` | `400`, `429` |
+| `POST /api/juego/sesion` | Sí | No (id y contraseña) | `200` | `400`, `401`, `429` |
 | `PUT /api/juego/contrasena` | Sí | Sí | `204` | `400`, `401` |
 | `POST /api/juego/partidas` | Sí | Sí | `201` (`200` si ya existía) | `400`, `401` |
 | `GET /api/pwa/jugadores?busqueda=` | Sí | No | `200` (lista vacía si no hay coincidencias) | `400` |
 | `GET /api/pwa/perfil?id=` | Sí | No | `200` | `400`, `404` |
 | `GET /api/pwa/partidas?id=` | Sí | No | `200` | `400`, `404` |
 | `GET /api/pwa/ranking` | Sí | No | `200` | `400` |
-| `POST /api/pwa/retroalimentacion` | Sí | No | `201` (`200` si ya existía) | `400` |
-| `POST /api/pwa/encuesta` | Sí | No | `201` (`200` si ya existía) | `400` |
+| `POST /api/pwa/retroalimentacion` | Sí | No | `201` (`200` si ya existía) | `400`, `429` |
+| `POST /api/pwa/encuesta` | Sí | No | `201` (`200` si ya existía) | `400`, `429` |
 | `GET /actuator/health` | No | No | `200` | |
 
 ### Primera prueba
@@ -88,10 +87,69 @@ Formato Problem Details (RFC 9457), en español.
 | Código | Qué hacer |
 |---|---|
 | `400` | Corregir el cuerpo (`errors` lista los campos). No reintentar igual |
-| `401` | Token ausente, inválido o reemplazado: pedir `POST /api/juego/sesion` |
+| `401` | Token ausente, inválido o reemplazado: pedir `POST /api/juego/sesion`. En `sesion` también significa contraseña incorrecta o jugador bloqueado temporalmente (la respuesta es la misma, a propósito) |
 | `403` | Falta la llave o es inválida. **No pedir al jugador iniciar sesión** |
 | `404` | El jugador no existe |
+| `429` | Se pasó el límite de peticiones de la IP. Esperar los segundos que indica la cabecera `Retry-After` y reintentar con la misma clave de idempotencia |
 | `5xx` o red | Reintentar con espera creciente y la misma clave de idempotencia |
+
+### Seguridad: la llave es pública, límites y bloqueo
+
+**La llave `X-Api-Key` no es un secreto.** La PWA la manda desde el navegador, así que cualquiera puede leerla en el
+bundle de la aplicación. Sirve para identificar al cliente y descartar tráfico que no viene de Fat Fish. Lo que protege
+los datos es el **token Bearer** del jugador y, en los endpoints que no lo piden, los **límites de peticiones**.
+
+| Endpoint | Escribe en la BD | Pide token | Qué lo protege |
+|---|---|:---:|---|
+| `POST /api/juego/partidas` | Sí | Sí | El token del jugador |
+| `PUT /api/juego/contrasena` | Sí | Sí | El token del jugador |
+| `POST /api/juego/registro` | Crea al jugador | No (el token se obtiene aquí) | Límite por IP: 5 por hora |
+| `POST /api/juego/sesion` | Genera un token e invalida el anterior | No | Límite por IP: 10 por minuto, y bloqueo temporal por jugador |
+| `POST /api/pwa/retroalimentacion` | Sí | No (anónima por diseño) | Límite por IP: 10 por minuto |
+| `POST /api/pwa/encuesta` | Sí | No (anónima por diseño) | Límite por IP: 10 por minuto |
+| `GET /api/pwa/*` | No | No | Solo la llave (consultas de lectura) |
+
+**Límite de peticiones por IP** (`RateLimitFilter`). Aplica a los `POST` de `registro`, `sesion`, `retroalimentacion` y
+`encuesta`. Al pasarse responde `429 Too Many Requests` con la cabecera `Retry-After` (segundos que faltan para que
+termine la ventana) y el mismo formato `application/problem+json` que `ApiKeyFilter`.
+
+- Es un contador en memoria con ventana fija, suficiente porque la API corre en una sola instancia. Cada IP tiene un
+  contador por endpoint.
+- La IP del cliente es la **primera** de la cabecera `X-Forwarded-For`, que es donde Cloud Run la entrega (no
+  `getRemoteAddr()`). Si la cabecera no existe, usa `getRemoteAddr()`.
+- `/api/juego/partidas`, `/api/juego/contrasena` y los `GET` no se limitan: ya piden token o solo leen.
+
+**Bloqueo temporal de `/api/juego/sesion` por jugador** (`LoginAttemptService`). Tras varios fallos seguidos, el
+jugador queda bloqueado un tiempo, **sin importar la IP**.
+
+- Por defecto: 5 fallos seguidos bloquean 15 minutos.
+- Un jugador bloqueado recibe el mismo `401` y el mismo mensaje que una contraseña incorrecta, sin `Retry-After` y sin
+  validar la contraseña, para no revelar si el jugador existe.
+- Los fallos se cuentan por id aunque el jugador no exista, así la respuesta es idéntica en los dos casos.
+- Un inicio de sesión correcto reinicia la cuenta de fallos.
+
+**Propiedades.** Todo se configura por propiedades o variables de entorno y **viene apagado por defecto**, así que en
+local y en CI no hay límites. Cloud Run los enciende con variables de entorno.
+
+| Propiedad | Variable de entorno | Valor por defecto |
+|---|---|---|
+| `fatfish.security.rate-limit.enabled` | `FATFISH_SECURITY_RATE_LIMIT_ENABLED` | `false` |
+| `fatfish.security.rate-limit.register-per-hour` | `FATFISH_SECURITY_RATE_LIMIT_REGISTER_PER_HOUR` | `5` |
+| `fatfish.security.rate-limit.login-per-minute` | `FATFISH_SECURITY_RATE_LIMIT_LOGIN_PER_MINUTE` | `10` |
+| `fatfish.security.rate-limit.feedback-per-minute` | `FATFISH_SECURITY_RATE_LIMIT_FEEDBACK_PER_MINUTE` | `10` |
+| `fatfish.security.rate-limit.survey-per-minute` | `FATFISH_SECURITY_RATE_LIMIT_SURVEY_PER_MINUTE` | `10` |
+| `fatfish.security.login-lockout.enabled` | `FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED` | `false` |
+| `fatfish.security.login-lockout.max-attempts` | `FATFISH_SECURITY_LOGIN_LOCKOUT_MAX_ATTEMPTS` | `5` |
+| `fatfish.security.login-lockout.minutes` | `FATFISH_SECURITY_LOGIN_LOCKOUT_MINUTES` | `15` |
+
+**Limitaciones.**
+
+- Los contadores y los bloqueos viven en la memoria de la instancia: se pierden al reiniciar la API o al desplegar una
+  revisión nueva, y no se comparten entre instancias. Por eso Cloud Run debe tener **una sola instancia**
+  (*Cantidad máxima de instancias* en `1`).
+- Un cliente puede mandar su propia cabecera `X-Forwarded-For`. Cloud Run agrega la IP real al final de la lista, y el
+  filtro toma la primera, como pide el ticket FF; si se quiere cerrar ese hueco, `clientIp` en `RateLimitFilter` debe
+  tomar la última entrada en lugar de la primera.
 
 ### Configuración en Cloud Run
 
@@ -106,9 +164,46 @@ entorno; nunca se escriben en el repositorio.
 | `DB_USER` y `DB_PASSWORD` | Usuario y contraseña de la base (la contraseña, desde Secret Manager) |
 | `FATFISH_SECURITY_API_KEY` | Llave que se compara con la cabecera `X-Api-Key` (desde Secret Manager). Si está vacía, el filtro queda apagado |
 | `FATFISH_SECURITY_API_KEY_REQUIRED` | Con `true`, la aplicación no arranca si falta la llave, para no quedar abierta por error |
+| `FATFISH_SECURITY_RATE_LIMIT_ENABLED` | Con `true`, enciende el límite de peticiones por IP. **Obligatoria** para activarlo |
+| `FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED` | Con `true`, enciende el bloqueo de `/sesion` por jugador. **Obligatoria** para activarlo |
+| `FATFISH_SECURITY_RATE_LIMIT_REGISTER_PER_HOUR` | Opcional. Registros por IP por hora (`5`) |
+| `FATFISH_SECURITY_RATE_LIMIT_LOGIN_PER_MINUTE` | Opcional. Inicios de sesión por IP por minuto (`10`) |
+| `FATFISH_SECURITY_RATE_LIMIT_FEEDBACK_PER_MINUTE` | Opcional. Retroalimentaciones por IP por minuto (`10`) |
+| `FATFISH_SECURITY_RATE_LIMIT_SURVEY_PER_MINUTE` | Opcional. Encuestas por IP por minuto (`10`) |
+| `FATFISH_SECURITY_LOGIN_LOCKOUT_MAX_ATTEMPTS` | Opcional. Fallos seguidos antes de bloquear (`5`) |
+| `FATFISH_SECURITY_LOGIN_LOCKOUT_MINUTES` | Opcional. Minutos que dura el bloqueo (`15`) |
+
+Las seis variables opcionales ya valen lo que indica la tabla si no se crean; solo hace falta agregarlas para
+cambiarlas o para verlas en la consola. Se escriben **sin comillas** (`true`, `5`) y con el nombre exacto: un nombre mal
+escrito no da error, simplemente se ignora.
 
 El perfil `cloudrun` es para la API publicada. Para trabajar desde tu computadora contra la base de la nube se usa el
 perfil `gcp` (sección 2).
+
+#### Agregar o cambiar variables desde la consola
+
+1. Entra a `console.cloud.google.com` y selecciona el proyecto en el selector de la parte superior.
+2. En el menú de navegación (☰), abre **Cloud Run**. En la lista de servicios, haz clic en el nombre del servicio
+   (`fat-fish-api`).
+3. Arriba, haz clic en **Editar e implementar nueva revisión** (en inglés, **Edit & deploy new revision**). Se abre un
+   panel lateral.
+4. En el panel, dentro de **Contenedor(es)**, abre la pestaña **Variables y secretos** (**Variables & Secrets**).
+5. En la sección **Variables de entorno**, haz clic en **Agregar variable** (**Add variable**) y crea:
+   - Nombre: `FATFISH_SECURITY_RATE_LIMIT_ENABLED` · Valor: `true`
+   - Nombre: `FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED` · Valor: `true`
+6. (Opcional) Para ajustar valores, agrega variables con el mismo patrón: `FATFISH_SECURITY_RATE_LIMIT_REGISTER_PER_HOUR`,
+   `FATFISH_SECURITY_RATE_LIMIT_LOGIN_PER_MINUTE`, `FATFISH_SECURITY_RATE_LIMIT_FEEDBACK_PER_MINUTE`,
+   `FATFISH_SECURITY_RATE_LIMIT_SURVEY_PER_MINUTE`, `FATFISH_SECURITY_LOGIN_LOCKOUT_MAX_ATTEMPTS` y
+   `FATFISH_SECURITY_LOGIN_LOCKOUT_MINUTES`, con los valores de la tabla anterior.
+7. **No borres** las variables que ya existen (`SPRING_PROFILES_ACTIVE`, `DB_URL`, `DB_USER`, `DB_PASSWORD`,
+   `FATFISH_SECURITY_API_KEY`, etc.). Solo agrega estas.
+8. Para confirmar que corre una sola instancia, baja en el mismo panel hasta **Escalado de revisión**
+   (**Revision scaling**) y revisa que **Cantidad máxima de instancias** sea `1`. Si no lo está, ponlo en `1`, porque
+   los contadores viven en la memoria de cada instancia.
+9. Pulsa **Implementar** (**Deploy**) al final del panel y espera a que la nueva revisión aparezca con la marca verde.
+
+Estas variables solo tienen efecto cuando la imagen desplegada ya incluye el código del límite y del bloqueo: antes de
+eso se ignoran sin problema.
 
 ## 1. Levantar PostgreSQL con Docker Compose
 
@@ -157,6 +252,13 @@ sin la cabecera `X-Api-Key: mi-llave` responden `403`:
 FATFISH_SECURITY_API_KEY=mi-llave ./mvnw spring-boot:run
 ```
 
+En local el límite de peticiones y el bloqueo de sesión también están apagados. Para probarlos, arranca con las dos
+variables que los encienden (los pasos están en la [sección 5](#5-probar-los-límites-y-el-bloqueo-a-mano)):
+
+```bash
+FATFISH_SECURITY_RATE_LIMIT_ENABLED=true FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED=true ./mvnw spring-boot:run
+```
+
 > **Si tu base local se creó antes de FF-51** (esquema con `players` y `runs`), la API no arranca porque la migración
 > `V1` cambió. Borra y vuelve a crear las bases: con Docker, `docker compose down -v` y `docker compose up -d`; con
 > PostgreSQL instalado, `dropdb fatfish` y `createdb -O fatfish fatfish` (igual con `fatfish_test`).
@@ -179,9 +281,6 @@ DB_NAME=fatfish
 DB_USER=<usuario>
 DB_PASSWORD=<contraseña>
 ```
-
-> `docker compose` también lee el `.env` de la raíz y tomaría `DB_USER` y `DB_PASSWORD` de Cloud SQL para crear el
-> contenedor local. Si tienes este archivo, levanta Docker con `docker compose --env-file /dev/null up -d`.
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=gcp
@@ -222,18 +321,13 @@ DB_URL=jdbc:postgresql://localhost:5433/fatfish_test ./mvnw test
 
 | Tipo | Clases | Qué cubren |
 |---|---|---|
-| Unitarias del servicio (JUnit 5 y Mockito) | `PwaServiceTest` | `findAllFeedback` y `createFeedback` de `PwaService`, con `FeedbackRepository` simulado |
 | Controller (MockMvc) | `GameControllerTest`, `PwaControllerTest` | Códigos HTTP, JSON, validaciones y mensajes de error |
+| Unitaria | `ApiKeyFilterTest`, `RateLimitFilterTest`, `LoginAttemptServiceTest` | Llave de la API; límite de peticiones (la petición N+1 responde `429` con `Retry-After`, la ventana termina, cada IP y endpoint van por separado, se usa la primera IP de `X-Forwarded-For`, `/partidas` no se limita); bloqueo de sesión (empieza, termina al pasar el tiempo y un login correcto lo reinicia) |
 | Integración (PostgreSQL) | `GameApiIntegrationTest`, `PwaApiIntegrationTest` | Registro y token, partida reenviada sin duplicados, estadísticas, comodines, perfil, historial y retroalimentación |
+| Integración (PostgreSQL) | `SecurityLimitsIntegrationTest` | Con los límites encendidos por propiedades: los cuatro endpoints sin token responden `429`, el bloqueo de `/sesion` aplica aunque la contraseña sea correcta y `/partidas` con token no se ve afectada |
 
-En `PwaService` los métodos de findAll y create se llaman `findAllFeedback()` y `createFeedback()`, no `findAll()` y
-`save()` como en el ejemplo de la práctica. El servicio maneja varias tablas (jugadores, partidas, ranking,
-retroalimentación y encuestas), y un `findAll()` sin más no diría qué lista devuelve. Las pruebas conservan los nombres
-de la práctica: `testFindAllFeedback` y `testCreateFeedback`.
-
-Ejecución de `mvn test` con las 48 pruebas en verde:
-
-![Ejecución exitosa de mvn test](docs/pruebas/mvn-test.png)
+El límite de peticiones y el bloqueo de sesión están apagados por defecto, así que el resto de las pruebas y el CI no
+se ven afectados; `SecurityLimitsIntegrationTest` los enciende con sus propias propiedades.
 
 Para generar el `.jar` (queda en `target/fat-fish-api.jar`):
 
@@ -242,38 +336,290 @@ Para generar el `.jar` (queda en `target/fat-fish-api.jar`):
 java -jar target/fat-fish-api.jar
 ```
 
-## 5. Datos de demostración
+## 5. Probar los límites y el bloqueo a mano
 
-`sql/demo` tiene un juego de datos ficticio para mostrar la PWA con contenido creíble: 28 jugadores, 107 partidas,
-comodines, 6 retroalimentaciones y 8 encuestas. Es el mismo que usa el laboratorio de pruebas de la PWA: en el
-repositorio `fat-fish-pwa`, `docs/laboratorio-pruebas/sql/02_carga.sql` es una copia de `02_cargar.sql`. Si cambias
-uno, cambia el otro.
+El límite de peticiones y el bloqueo de sesión vienen apagados, así que se prueban arrancando la API con las dos
+variables que los encienden y usando dos terminales. Swagger no permite poner la cabecera `X-Forwarded-For`, con la
+que se simulan IPs distintas, por eso las pruebas de límites se hacen con `curl` y una IP falsa distinta en cada
+prueba (`X-Forwarded-For: 10.x.x.x`), para que los contadores no se mezclen. **Reiniciar la API borra todos los
+contadores y bloqueos**, porque viven en memoria.
 
-No son migraciones de Flyway: Flyway corre cada migración una sola vez y en todas las bases, incluida la de las
-pruebas. Estos scripts se corren a mano con `psql` y solo donde se quieran los datos.
+> **No hagas estas pruebas contra la base de la nube (perfil `gcp`)**: insertan jugadores, encuestas y
+> retroalimentaciones falsas. Úsalas con la base local de Docker.
 
-| Script | Cuándo |
-|---|---|
-| `01_limpiar.sql` | Borra solo los datos de demostración: id en su rango (jugador 1 a 28, retroalimentacion 1 a 6, encuesta 1 a 8) **y** su marca (el hash fijo de la contraseña o la fecha exacta). Los datos reales no se tocan aunque tengan esos id |
-| `02_cargar.sql` | Carga los datos de demostración; si ya están, falla sin cambiar nada (todo va en una transacción) |
+### 5.1 Preparación
 
-Las cuentas tienen una contraseña aleatoria que nadie conoce y tokens aleatorios, así que nadie puede iniciar sesión
-con ellas ni enviar partidas a su nombre. Al final, cada secuencia se mueve al id más alto de su tabla: el siguiente
-jugador que se registre será el 29. Si en una base ya hay jugadores reales con id del 1 al 28, `02_cargar.sql`
-falla por id repetido y no cambia nada.
-
-Con los datos del `.env` del perfil `gcp`:
+**Terminal 1**: arranca la API con límites y bloqueo (si tu PostgreSQL usa otro puerto, agrega `DB_URL`):
 
 ```bash
-set -a; source .env; set +a
-export PGPASSWORD="$DB_PASSWORD"
-psql "host=$DB_HOST dbname=$DB_NAME user=$DB_USER sslmode=require" -v ON_ERROR_STOP=1 -f sql/demo/01_limpiar.sql
-psql "host=$DB_HOST dbname=$DB_NAME user=$DB_USER sslmode=require" -v ON_ERROR_STOP=1 -f sql/demo/02_cargar.sql
-unset PGPASSWORD
+export FATFISH_SECURITY_RATE_LIMIT_ENABLED=true
+export FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED=true
+./mvnw spring-boot:run
 ```
 
-En local son los mismos dos comandos con `psql -U fatfish -h localhost -d fatfish`. Cuando ya haya jugadores reales,
-saca un respaldo de Cloud SQL antes de correr cualquiera de estos scripts.
+Espera la línea `Started FatFishApiApplication`. Usa los valores del ticket: registro 5 por hora; sesión,
+retroalimentación y encuesta 10 por minuto; bloqueo tras 5 fallos por 15 minutos.
+
+**Terminal 2**: comprueba que responde:
+
+```bash
+BASE=http://localhost:8080
+curl -s $BASE/actuator/health
+```
+
+Debe decir `"status":"UP"`. Si la API corre con llave (`FATFISH_SECURITY_API_KEY`), agrega
+`-H "X-Api-Key: <llave>"` a cada `curl` de abajo.
+
+### 5.2 Límite de peticiones por IP
+
+**Registro: 5 por hora (el sexto responde `429`).**
+
+```bash
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -w "intento $i -> %{http_code}\n" -X POST $BASE/api/juego/registro \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.1.1.1" \
+    -d "{\"alias\":\"prueba$i\",\"contrasena\":\"clave-de-prueba-123\"}"
+done
+```
+
+Debes ver `201` en los intentos 1 a 5 y `429` en el 6. Mira la respuesta completa del `429`:
+
+```bash
+curl -i -X POST $BASE/api/juego/registro \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.1.1.1" \
+  -d '{"alias":"prueba7","contrasena":"clave-de-prueba-123"}'
+```
+
+Revisa que aparezca `HTTP/1.1 429`, una cabecera `Retry-After: <número>` (entre 1 y 3600) y
+`Content-Type: application/problem+json` con un cuerpo como
+`{"title":"Demasiadas peticiones","status":429,"detail":"Superaste el límite de peticiones; intenta de nuevo en N segundos"}`.
+
+**Cada IP tiene su contador y se usa la primera IP de `X-Forwarded-For`.**
+
+```bash
+# IP distinta: debe pasar (201)
+curl -s -o /dev/null -w "otra IP -> %{http_code}\n" -X POST $BASE/api/juego/registro \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.1.1.2" \
+  -d '{"alias":"otraip","contrasena":"clave-de-prueba-123"}'
+
+# La primera IP de la lista es la bloqueada (10.1.1.1): debe dar 429
+curl -s -o /dev/null -w "primera IP bloqueada -> %{http_code}\n" -X POST $BASE/api/juego/registro \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.1.1.1, 99.99.99.99" \
+  -d '{"alias":"xff1","contrasena":"clave-de-prueba-123"}'
+
+# La primera IP es nueva aunque la segunda sea la bloqueada: debe pasar (201)
+curl -s -o /dev/null -w "primera IP nueva -> %{http_code}\n" -X POST $BASE/api/juego/registro \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.1.1.9, 10.1.1.1" \
+  -d '{"alias":"xff2","contrasena":"clave-de-prueba-123"}'
+```
+
+Debes ver `201`, `429` y `201`, en ese orden.
+
+**Encuesta: 10 por minuto, y la ventana termina.**
+
+```bash
+for i in $(seq 1 11); do
+  curl -s -o /dev/null -w "intento $i -> %{http_code}\n" -X POST $BASE/api/pwa/encuesta \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.2.2.2" \
+    -d '{"percepcionRiesgo":4,"cambioOpinion":3,"claridadMensaje":5}'
+done
+```
+
+Debes ver `201` del 1 al 10 y `429` en el 11, con `Retry-After` de 60 o menos. Espera a que termine la ventana y
+repite una petición:
+
+```bash
+sleep 65
+curl -s -o /dev/null -w "después de esperar -> %{http_code}\n" -X POST $BASE/api/pwa/encuesta \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.2.2.2" \
+  -d '{"percepcionRiesgo":4,"cambioOpinion":3,"claridadMensaje":5}'
+```
+
+Debe dar `201`: el límite se libera solo.
+
+**Retroalimentación: 10 por minuto.**
+
+```bash
+for i in $(seq 1 11); do
+  curl -s -o /dev/null -w "intento $i -> %{http_code}\n" -X POST $BASE/api/pwa/retroalimentacion \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.3.3.3" \
+    -d '{"categoria":"OTRO","componente":"PWA","mensaje":"Mensaje de prueba largo"}'
+done
+```
+
+Debes ver `201` del 1 al 10 y `429` en el 11, con el mismo formato de arriba.
+
+**Sesión: 10 por minuto por IP.** Se usa un id que no existe para no mezclar esto con el bloqueo por jugador:
+
+```bash
+for i in $(seq 1 11); do
+  curl -s -o /dev/null -w "intento $i -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.5.5.5" \
+    -d '{"jugadorId":888888,"contrasena":"incorrecta"}'
+done
+```
+
+Debes ver `401` del 1 al 10 (contraseña incorrecta, dentro del límite) y `429` en el 11.
+
+### 5.3 Bloqueo de `/sesion` por jugador
+
+Crea un jugador de prueba y anota su id:
+
+```bash
+curl -s -X POST $BASE/api/juego/registro \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.4.4.4" \
+  -d '{"alias":"bloqueo","contrasena":"clave-correcta-123"}'
+```
+
+Responde algo como `{"jugadorId":"37","token":"..."}`. Guarda el id:
+
+```bash
+ID=37
+```
+
+Cinco fallos desde IPs distintas (el bloqueo no depende de la IP):
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -s -o /dev/null -w "fallo $i -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.4.4.1$i" \
+    -d "{\"jugadorId\":$ID,\"contrasena\":\"incorrecta\"}"
+done
+```
+
+Debes ver `401` cinco veces. Con el quinto fallo el jugador queda bloqueado. Ahora, con la contraseña **correcta**, debe
+seguir respondiendo `401`:
+
+```bash
+curl -i -X POST $BASE/api/juego/sesion \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.4.4.20" \
+  -d "{\"jugadorId\":$ID,\"contrasena\":\"clave-correcta-123\"}"
+```
+
+Debes ver `HTTP/1.1 401` con `"detail":"El id del jugador o la contraseña no son correctos"` y **ningún token**. La
+respuesta bloqueada debe ser igual a la de un jugador que no existe:
+
+```bash
+curl -i -X POST $BASE/api/juego/sesion \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.4.4.30" \
+  -d '{"jugadorId":999999,"contrasena":"clave-correcta-123"}'
+```
+
+Las dos respuestas deben coincidir en código, título y `detail`, y ninguna debe traer `Retry-After`.
+
+### 5.4 `/partidas` con token no se ve afectada
+
+Registra un jugador aparte y toma su token:
+
+```bash
+curl -s -X POST $BASE/api/juego/registro \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.6.6.6" \
+  -d '{"alias":"partidas","contrasena":"clave-de-prueba-123"}'
+```
+
+Copia el valor de `token` y envía 12 partidas, más que cualquier límite:
+
+```bash
+TOKEN='pega-aqui-el-token'
+for i in $(seq 1 12); do
+  curl -s -o /dev/null -w "partida $i -> %{http_code}\n" -X POST $BASE/api/juego/partidas \
+    -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -H "X-Forwarded-For: 10.6.6.6" \
+    -d "{\"claveIdempotencia\":\"$(cat /proc/sys/kernel/random/uuid)\",\"terminadaEn\":\"2026-11-09T10:00:00Z\",\"resultado\":\"DERROTA\",\"rondaAlcanzada\":1,\"puntaje\":0,\"dineroInvertido\":0,\"dineroGanado\":0,\"dineroPerdido\":0,\"vecesTodoONada\":0,\"empenos\":0,\"prestamos\":0,\"duracionSeg\":1}"
+done
+```
+
+Debes ver `201` las 12 veces. (`/proc/sys/kernel/random/uuid` existe en Linux; en otro sistema, pon cualquier UUID
+distinto en cada partida.)
+
+### 5.5 Con Swagger
+
+En `http://localhost:8080/swagger-ui.html`, expande `POST /api/pwa/encuesta`, pulsa **Try it out**, deja el cuerpo con
+valores válidos (`percepcionRiesgo`, `cambioOpinion` y `claridadMensaje` entre 1 y 5) y pulsa **Execute** 11 veces
+seguidas en menos de un minuto. En la décima primera debe aparecer **Code 429**, el cuerpo `problem+json` y, en
+**Response headers**, la cabecera `retry-after`. Swagger usa tu IP real, así que su contador es independiente del de
+`curl`.
+
+### 5.6 Valores configurables y fin del bloqueo
+
+Para no esperar 15 minutos, detén la API (`Ctrl+C`) y arráncala con valores cortos:
+
+```bash
+export FATFISH_SECURITY_RATE_LIMIT_REGISTER_PER_HOUR=2
+export FATFISH_SECURITY_LOGIN_LOCKOUT_MAX_ATTEMPTS=3
+export FATFISH_SECURITY_LOGIN_LOCKOUT_MINUTES=1
+./mvnw spring-boot:run
+```
+
+**Las propiedades se respetan (registro con límite 2):**
+
+```bash
+for i in 1 2 3; do
+  curl -s -o /dev/null -w "intento $i -> %{http_code}\n" -X POST $BASE/api/juego/registro \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.7.7.7" \
+    -d "{\"alias\":\"config$i\",\"contrasena\":\"clave-de-prueba-123\"}"
+done
+```
+
+Debes ver `201`, `201` y `429`.
+
+**El bloqueo empieza y termina (3 fallos, 1 minuto).** Usa el `ID` del jugador `bloqueo` de la sección 5.3:
+
+```bash
+for i in 1 2 3; do
+  curl -s -o /dev/null -w "fallo $i -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.8.8.$i" \
+    -d "{\"jugadorId\":$ID,\"contrasena\":\"incorrecta\"}"
+done
+
+curl -s -o /dev/null -w "correcta, bloqueado -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.8.8.9" \
+  -d "{\"jugadorId\":$ID,\"contrasena\":\"clave-correcta-123\"}"
+
+sleep 65
+
+curl -s -X POST $BASE/api/juego/sesion \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.8.8.9" \
+  -d "{\"jugadorId\":$ID,\"contrasena\":\"clave-correcta-123\"}"
+```
+
+Debes ver tres `401`, un cuarto `401` (bloqueado) y, tras esperar, un `200` con `jugadorId` y `token`. Ese token
+invalida el anterior del jugador, por diseño.
+
+**Un inicio de sesión correcto reinicia la cuenta de fallos:**
+
+```bash
+for i in 1 2; do
+  curl -s -o /dev/null -w "fallo $i -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.9.9.$i" \
+    -d "{\"jugadorId\":$ID,\"contrasena\":\"incorrecta\"}"
+done
+curl -s -o /dev/null -w "correcta -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.9.9.3" \
+  -d "{\"jugadorId\":$ID,\"contrasena\":\"clave-correcta-123\"}"
+for i in 4 5; do
+  curl -s -o /dev/null -w "fallo $i -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+    -H "Content-Type: application/json" -H "X-Forwarded-For: 10.9.9.$i" \
+    -d "{\"jugadorId\":$ID,\"contrasena\":\"incorrecta\"}"
+done
+curl -s -o /dev/null -w "correcta -> %{http_code}\n" -X POST $BASE/api/juego/sesion \
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 10.9.9.6" \
+  -d "{\"jugadorId\":$ID,\"contrasena\":\"clave-correcta-123\"}"
+```
+
+Debes ver `401`, `401`, `200`, `401`, `401`, `200`. Si el último sale `401`, el contador no se reinició.
+
+### 5.7 Desactivados
+
+Detén la API y arráncala **sin** las variables de seguridad:
+
+```bash
+unset FATFISH_SECURITY_RATE_LIMIT_ENABLED FATFISH_SECURITY_LOGIN_LOCKOUT_ENABLED
+unset FATFISH_SECURITY_RATE_LIMIT_REGISTER_PER_HOUR FATFISH_SECURITY_LOGIN_LOCKOUT_MAX_ATTEMPTS FATFISH_SECURITY_LOGIN_LOCKOUT_MINUTES
+./mvnw spring-boot:run
+```
+
+Con esa configuración, 12 encuestas seguidas deben responder `201`, 6 inicios de sesión fallidos seguidos deben
+responder `401` y, después de ellos, la contraseña correcta debe responder `200` (sin bloqueo).
 
 ## Endpoints
 
@@ -297,6 +643,8 @@ Responde `201`:
 El token solo se entrega aquí. El juego lo guarda en el dispositivo y lo envía en la cabecera
 `Authorization: Bearer <token>`; la base de datos solo guarda su SHA-256 (`jugador.token_hash`).
 
+Si la IP pasa el límite (5 registros por hora por defecto), responde `429` con `Retry-After`.
+
 ### `POST /api/juego/sesion`
 
 Para usar la cuenta en otro dispositivo (o si el juego perdió el token). Con el id y la contraseña responde `200`
@@ -306,6 +654,10 @@ o la contraseña es incorrecta responde `401` con el mismo mensaje, para no reve
 ```json
 { "jugadorId": 5, "contrasena": "pez-gordo-2026" }
 ```
+
+Tras varios fallos seguidos (5 por defecto) el jugador queda bloqueado un tiempo (15 minutos por defecto), sin importar
+la IP: mientras dure, responde `401` con el mismo mensaje que una contraseña incorrecta, aunque la contraseña sea la
+correcta. Además, cada IP está limitada a 10 intentos por minuto y, al pasarse, responde `429` con `Retry-After`.
 
 ### `PUT /api/juego/contrasena`
 
@@ -413,6 +765,8 @@ u `OTRO`; `mensaje`: de 10 a 1000 caracteres. Responde `201` con `{ "id": "5", "
 La cabecera opcional `Idempotency-Key` (UUID) evita duplicados: la PWA la genera al guardar el envío y la repite en
 cada reintento; si la clave ya existe, la API responde `200` con el registro guardado y no inserta otro.
 
+Si la IP pasa el límite (10 por minuto por defecto), responde `429` con `Retry-After`.
+
 ### `POST /api/pwa/encuesta`
 
 Guarda una encuesta anónima sobre la percepción del juego y la ludopatía. `percepcionRiesgo`, `cambioOpinion` y
@@ -425,6 +779,8 @@ como nulo). Responde `201`:
 
 La cabecera opcional `Idempotency-Key` (UUID) funciona igual que en la retroalimentación: si la clave ya existe, la
 API responde `200` con `created` en `false` y no inserta un duplicado. La encuesta no guarda ningún dato del jugador.
+
+Si la IP pasa el límite (10 por minuto por defecto), responde `429` con `Retry-After`.
 
 ## Modelo de datos
 
