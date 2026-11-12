@@ -39,16 +39,18 @@ public class GameService {
     private final JokerRepository jokerRepository;
     private final TokenService tokenService;
     private final PasswordEncoder passwordEncoder;
+    private final LoginAttemptService loginAttempts;
 
     public GameService(PlayerRepository playerRepository, PlayerStatisticsRepository statisticsRepository,
             MatchRepository matchRepository, JokerRepository jokerRepository, TokenService tokenService,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder, LoginAttemptService loginAttempts) {
         this.playerRepository = playerRepository;
         this.statisticsRepository = statisticsRepository;
         this.matchRepository = matchRepository;
         this.jokerRepository = jokerRepository;
         this.tokenService = tokenService;
         this.passwordEncoder = passwordEncoder;
+        this.loginAttempts = loginAttempts;
     }
 
     /** Creates the player with empty statistics and returns its id and token. */
@@ -63,13 +65,20 @@ public class GameService {
 
     /**
      * Checks the id and password and gives the device a new token; the previous token stops working.
-     * An unknown id and a wrong password get the same error so the response does not reveal which ids exist.
+     * An unknown id, a wrong password and a temporarily blocked player (too many failed attempts) get the same
+     * error so the response does not reveal which ids exist.
      */
     @Transactional
     public SessionResponse login(LoginRequest request) {
-        Player player = playerRepository.findById(request.jugadorId())
+        long playerId = request.jugadorId();
+        // El intento se cuenta antes de revisar la contraseña, para que peticiones simultáneas no pasen del máximo
+        if (!loginAttempts.tryAcquire(playerId)) {
+            throw new InvalidCredentialsException();
+        }
+        Player player = playerRepository.findById(playerId)
                 .filter(found -> passwordEncoder.matches(request.contrasena(), found.getPasswordHash()))
                 .orElseThrow(InvalidCredentialsException::new);
+        loginAttempts.reset(playerId);
         String token = tokenService.newToken();
         player.setTokenHash(tokenService.hash(token));
         player.setLastActivity(Instant.now());
