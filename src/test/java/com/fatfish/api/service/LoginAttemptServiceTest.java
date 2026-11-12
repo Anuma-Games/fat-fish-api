@@ -14,11 +14,11 @@ class LoginAttemptServiceTest {
 
     @Test
     void blocksAfterTheConfiguredFailuresAndReleasesWhenTheTimeEnds() {
-        service.recordFailure(1);
-        service.recordFailure(1);
+        service.tryAcquire(1);
+        service.tryAcquire(1);
         assertThat(service.isBlocked(1)).isFalse();
 
-        service.recordFailure(1);
+        service.tryAcquire(1);
         assertThat(service.isBlocked(1)).isTrue();
 
         clock.advance(Duration.ofMinutes(14));
@@ -30,11 +30,11 @@ class LoginAttemptServiceTest {
 
     @Test
     void aSuccessfulLoginRestartsTheCount() {
-        service.recordFailure(1);
-        service.recordFailure(1);
+        service.tryAcquire(1);
+        service.tryAcquire(1);
         service.reset(1);
-        service.recordFailure(1);
-        service.recordFailure(1);
+        service.tryAcquire(1);
+        service.tryAcquire(1);
 
         assertThat(service.isBlocked(1)).isFalse();
     }
@@ -42,7 +42,7 @@ class LoginAttemptServiceTest {
     @Test
     void countsEachPlayerSeparately() {
         for (int i = 0; i < 3; i++) {
-            service.recordFailure(1);
+            service.tryAcquire(1);
         }
 
         assertThat(service.isBlocked(1)).isTrue();
@@ -51,10 +51,10 @@ class LoginAttemptServiceTest {
 
     @Test
     void failuresOutsideTheWindowDoNotAddUp() {
-        service.recordFailure(1);
-        service.recordFailure(1);
+        service.tryAcquire(1);
+        service.tryAcquire(1);
         clock.advance(Duration.ofMinutes(16));
-        service.recordFailure(1);
+        service.tryAcquire(1);
 
         assertThat(service.isBlocked(1)).isFalse();
     }
@@ -62,14 +62,24 @@ class LoginAttemptServiceTest {
     @Test
     void manyOtherIdsDoNotRemoveAnActiveBlock() {
         for (int i = 0; i < 3; i++) {
-            service.recordFailure(1);
+            service.tryAcquire(1);
         }
 
         for (long id = 2; id < 20_000; id++) {
-            service.recordFailure(id);
+            service.tryAcquire(id);
         }
 
         assertThat(service.isBlocked(1)).isTrue();
+    }
+
+    @Test
+    void simultaneousAttemptsCannotGoPastTheMaximum() {
+        // Tres peticiones que todavía no terminan de revisar la contraseña: la cuarta ya no pasa
+        assertThat(service.tryAcquire(1)).isTrue();
+        assertThat(service.tryAcquire(1)).isTrue();
+        assertThat(service.tryAcquire(1)).isTrue();
+
+        assertThat(service.tryAcquire(1)).isFalse();
     }
 
     @Test
@@ -77,7 +87,7 @@ class LoginAttemptServiceTest {
         LoginAttemptService disabled = new LoginAttemptService(false, 3, 15, clock);
 
         for (int i = 0; i < 10; i++) {
-            disabled.recordFailure(1);
+            disabled.tryAcquire(1);
         }
 
         assertThat(disabled.isBlocked(1)).isFalse();

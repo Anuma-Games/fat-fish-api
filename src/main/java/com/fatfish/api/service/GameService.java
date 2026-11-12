@@ -71,16 +71,13 @@ public class GameService {
     @Transactional
     public SessionResponse login(LoginRequest request) {
         long playerId = request.jugadorId();
-        if (loginAttempts.isBlocked(playerId)) {
+        // El intento se cuenta antes de revisar la contraseña, para que peticiones simultáneas no pasen del máximo
+        if (!loginAttempts.tryAcquire(playerId)) {
             throw new InvalidCredentialsException();
         }
         Player player = playerRepository.findById(playerId)
                 .filter(found -> passwordEncoder.matches(request.contrasena(), found.getPasswordHash()))
-                .orElse(null);
-        if (player == null) {
-            loginAttempts.recordFailure(playerId);
-            throw new InvalidCredentialsException();
-        }
+                .orElseThrow(InvalidCredentialsException::new);
         loginAttempts.reset(playerId);
         String token = tokenService.newToken();
         player.setTokenHash(tokenService.hash(token));

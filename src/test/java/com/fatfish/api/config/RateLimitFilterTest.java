@@ -72,6 +72,19 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void countsAPlayerBehindFirebaseHostingByTheirOwnIp() throws Exception {
+        // Firebase Hosting reenvía desde una IP de Google distinta en cada petición; la del jugador va antes
+        send(filter, "POST", "/api/juego/sesion", "203.0.113.5, 74.125.212.68");
+        send(filter, "POST", "/api/juego/sesion", "203.0.113.5, 64.233.172.9");
+        send(filter, "POST", "/api/juego/sesion", "203.0.113.5, 192.178.15.104");
+
+        assertThat(send(filter, "POST", "/api/juego/sesion", "203.0.113.5, 74.125.215.76").getStatus())
+                .isEqualTo(429);
+        assertThat(send(filter, "POST", "/api/juego/sesion", "198.51.100.7, 74.125.212.68").getStatus())
+                .isEqualTo(200);
+    }
+
+    @Test
     void stillLimitsBehindForwardedHeaderFilterLikeTheCloudrunProfile() throws Exception {
         for (int i = 0; i < 3; i++) {
             assertThat(sendThroughForwardedHeaderFilter("10.0.0." + i + ", 9.9.9.9", null).getStatus())
@@ -80,6 +93,24 @@ class RateLimitFilterTest {
 
         // Ni otra IP falsa al inicio ni un X-Forwarded-Prefix que cambie getRequestURI() evitan el límite
         assertThat(sendThroughForwardedHeaderFilter("10.0.0.99, 9.9.9.9", "/otro").getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    void keepsActiveWindowsWhenTheMapIsFull() throws Exception {
+        for (int i = 0; i < 2; i++) {
+            send(filter, "POST", "/api/juego/registro", "1.1.1.1");
+        }
+        for (int i = 1; i < 10_000; i++) {
+            send(filter, "POST", "/api/juego/registro", "10." + (i / 65_536) + "." + (i / 256 % 256) + "." + (i % 256));
+        }
+
+        // Ninguna ventana activa se descarta: la IP que ya gastó su límite sigue en 429 y una IP nueva espera
+        assertThat(send(filter, "POST", "/api/juego/registro", "1.1.1.1").getStatus()).isEqualTo(429);
+        assertThat(send(filter, "POST", "/api/juego/registro", "2.2.2.2").getStatus()).isEqualTo(429);
+
+        clock.advance(Duration.ofHours(1));
+
+        assertThat(send(filter, "POST", "/api/juego/registro", "2.2.2.2").getStatus()).isEqualTo(200);
     }
 
     @Test

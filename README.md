@@ -138,8 +138,10 @@ La llave no protege los datos. Los protege el token del jugador y, en los endpoi
   por defecto (local y CI) y encendidos en el perfil `cloudrun`.
 - Al pasarse del límite responde `429` con `Retry-After`. Un jugador bloqueado recibe el mismo `401` que una
   contraseña incorrecta, aunque la contraseña sea correcta. Los ids que no existen también se cuentan.
-- La IP es la **última** entrada de `X-Forwarded-For`: Cloud Run agrega ahí la IP real, y lo anterior lo puede
-  escribir el cliente.
+- La IP se lee de `X-Forwarded-For` desde el final: Cloud Run agrega ahí la IP que se le conecta, y lo anterior lo
+  puede escribir el cliente. Si esa IP es de un proxy de Google (Firebase Hosting reenvía `/api/**` de la PWA), se toma
+  la anterior. Los rangos se cambian con `fatfish.security.rate-limit.trusted-proxies`. Para ver la cabecera en los
+  logs, enciende `LOGGING_LEVEL_COM_FATFISH_API_CONFIG_RATELIMITFILTER=DEBUG` en Cloud Run.
 - Los contadores viven en memoria: se pierden al desplegar y no se comparten entre instancias. Cloud Run debe tener
   **máximo 1 instancia**.
 - Cualquiera que conozca el id de un jugador puede bloquear su inicio de sesión 15 minutos. Se acepta en el MVP: el
