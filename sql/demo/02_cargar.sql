@@ -287,10 +287,12 @@ insert into encuesta(id, clave_idempotencia, percepcion_riesgo, cambio_opinion, 
 
 -- Los id se insertaron a mano, así que cada secuencia se mueve al id más alto de su tabla:
 -- el siguiente jugador que se registre será el 29 (o el siguiente al último jugador real).
-select setval('jugador_id_seq', (select max(id) from jugador));
-select setval('partida_id_seq', (select max(id) from partida));
-select setval('retroalimentacion_id_seq', (select max(id) from retroalimentacion));
-select setval('encuesta_id_seq', (select max(id) from encuesta));
+-- greatest evita bajar la secuencia: si la API reservó un id que todavía no se ve en la tabla,
+-- la secuencia se queda donde está y el siguiente registro no choca con ese id.
+select setval('jugador_id_seq', greatest((select max(id) from jugador), (select last_value from jugador_id_seq)));
+select setval('partida_id_seq', greatest((select max(id) from partida), (select last_value from partida_id_seq)));
+select setval('retroalimentacion_id_seq', greatest((select max(id) from retroalimentacion), (select last_value from retroalimentacion_id_seq)));
+select setval('encuesta_id_seq', greatest((select max(id) from encuesta), (select last_value from encuesta_id_seq)));
 
 commit;
 
