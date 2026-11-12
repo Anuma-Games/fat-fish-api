@@ -26,7 +26,7 @@ class TrustedProxiesTest {
 
     @Test
     void rejectsBadRangesWhenTheApplicationStarts() {
-        for (String bad : new String[] {"1.2.3.0/33", "2001:4860::/129", "1.2.3.0", "1.2.3.0/x", "proxy/8"}) {
+        for (String bad : new String[] {"1.2.3.0/33", "2001:4860::/129", "1.2.3.0", "1.2.3.0/x", "proxy/8", "1.2.3.0/8/"}) {
             assertThatThrownBy(() -> TrustedProxies.parse(bad))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining(bad);
