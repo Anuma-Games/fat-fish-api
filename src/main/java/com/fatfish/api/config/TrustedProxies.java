@@ -49,13 +49,18 @@ final class TrustedProxies {
         return address != null && ranges.stream().anyMatch(range -> matches(range, address));
     }
 
+    /** Falla al arrancar si un rango está mal escrito, en lugar de fallar después en cada petición. */
     private static Range range(String cidr) {
         String[] parts = cidr.split("/");
-        byte[] network = parseIp(parts[0]);
-        if (network == null || parts.length != 2) {
+        byte[] network = parts.length == 2 ? parseIp(parts[0]) : null;
+        if (network == null || !parts[1].matches("\\d{1,3}")) {
             throw new IllegalArgumentException("Rango de proxy inválido: " + cidr);
         }
-        return new Range(network, Integer.parseInt(parts[1]));
+        int prefix = Integer.parseInt(parts[1]);
+        if (prefix > network.length * 8) {
+            throw new IllegalArgumentException("Rango de proxy inválido: " + cidr);
+        }
+        return new Range(network, prefix);
     }
 
     private static boolean matches(Range range, byte[] address) {

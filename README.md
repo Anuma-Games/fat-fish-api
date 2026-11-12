@@ -146,6 +146,11 @@ La llave no protege los datos. Los protege el token del jugador y, en los endpoi
   **máximo 1 instancia**.
 - Cualquiera que conozca el id de un jugador puede bloquear su inicio de sesión 15 minutos. Se acepta en el MVP: el
   juego funciona sin sesión y el token del dispositivo sigue sirviendo.
+- Los rangos de proxies de Google son amplios: también los usan servicios como Apps Script, y desde ahí alguien podría
+  escribir en `X-Forwarded-For` otra IP en cada petición. Se acepta en el MVP; con el log en `DEBUG` se pueden anotar
+  los rangos de los que de verdad llega Firebase y dejar solo esos en `trusted-proxies`.
+- El bloqueo sigue hasta 10,000 ids con intentos recientes. Con más, los ids nuevos no se cuentan (el límite por IP
+  sigue aplicando) y ningún bloqueo activo se borra.
 
 ### Configuración en Cloud Run
 
@@ -345,7 +350,8 @@ unset PGPASSWORD
 ```
 
 En local son los mismos dos comandos con `psql -U fatfish -h localhost -d fatfish`. Cuando ya haya jugadores reales,
-saca un respaldo de Cloud SQL antes de correr cualquiera de estos scripts.
+saca un respaldo de Cloud SQL antes de correr cualquiera de estos scripts, y córrelos cuando nadie esté usando la API:
+`02_cargar.sql` mueve las secuencias, y un registro al mismo tiempo podría tomar un id repetido.
 
 ## Endpoints
 

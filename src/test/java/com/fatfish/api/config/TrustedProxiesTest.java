@@ -1,6 +1,7 @@
 package com.fatfish.api.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +22,15 @@ class TrustedProxiesTest {
         // 192.178.0.0/15 cubre 192.178.x.x y 192.179.x.x
         assertThat(google.contains("192.179.255.255")).isTrue();
         assertThat(google.contains("192.180.0.0")).isFalse();
+    }
+
+    @Test
+    void rejectsBadRangesWhenTheApplicationStarts() {
+        for (String bad : new String[] {"1.2.3.0/33", "2001:4860::/129", "1.2.3.0", "1.2.3.0/x", "proxy/8"}) {
+            assertThatThrownBy(() -> TrustedProxies.parse(bad))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(bad);
+        }
     }
 
     @Test
