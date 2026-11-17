@@ -39,8 +39,14 @@ const ESCENARIOS = {
   },
 };
 
+// A typo in ESCENARIO would leave the scenario undefined and k6 would fail with an unclear error
+const ESCENARIO = __ENV.ESCENARIO || 'ci';
+if (!ESCENARIOS[ESCENARIO]) {
+  throw new Error(`Escenario desconocido "${ESCENARIO}". Usa uno de: ${Object.keys(ESCENARIOS).join(', ')}`);
+}
+
 export const options = {
-  scenarios: { pwa: ESCENARIOS[__ENV.ESCENARIO || 'ci'] },
+  scenarios: { pwa: ESCENARIOS[ESCENARIO] },
   thresholds: {
     http_req_duration: ['p(95)<500', 'p(99)<1000'],
     http_req_failed: ['rate<0.01'],

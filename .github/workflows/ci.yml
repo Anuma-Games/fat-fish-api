@@ -132,8 +132,22 @@ jobs:
           PGPASSWORD: fatfish
         run: psql -h localhost -U fatfish -d fatfish -v ON_ERROR_STOP=1 -f sql/demo/02_cargar.sql
 
+      # The first requests pay for the JVM warm-up (class loading, JIT, connection pool); without this
+      # step they set the p99 and a slow shared runner could fail the job with no real regression
+      - name: Calentar la API
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/ranking?pagina=0"
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/perfil?id=$(( i % 28 + 1 ))"
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/partidas?id=$(( i % 28 + 1 ))"
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/jugadores?busqueda=an"
+            curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' \
+              -d '{"percepcionRiesgo":4,"cambioOpinion":3,"claridadMensaje":5,"comentario":"Calentamiento"}' \
+              http://localhost:8080/api/pwa/encuesta
+          done
+
       - name: Instalar k6
-        uses: grafana/setup-k6-action@v1
+        uses: grafana/setup-k6-action@c47136d33d365efbeb9ae7266908b5dcf98cdece # v1.3.0
 
       # The thresholds of perf/carga-pwa.js (p95 < 500 ms, p99 < 1 s, errors < 1 %) fail the job on a regression
       - name: Prueba de carga (20 usuarios, 1 minuto)
