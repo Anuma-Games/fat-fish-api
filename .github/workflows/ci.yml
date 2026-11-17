@@ -80,6 +80,91 @@ jobs:
           path: target/surefire-reports/
           if-no-files-found: warn
 
+  performance:
+    name: Prueba de carga (k6)
+    needs: build
+    runs-on: ubuntu-24.04
+
+    # Same database as local development, loaded with the demo data (28 players, 107 matches)
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: fatfish
+          POSTGRES_USER: fatfish
+          POSTGRES_PASSWORD: fatfish
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fatfish -d fatfish"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Java 21 (Temurin)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Descargar el .jar del job de compilación
+        uses: actions/download-artifact@v7
+        with:
+          name: fat-fish-api-jar
+          path: target
+
+      # Flyway creates the schema when the API starts; the API key filter and the rate limit are off by default
+      - name: Arrancar la API
+        run: |
+          nohup java -Xmx512m -jar target/*.jar > api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/actuator/health && exit 0
+            sleep 2
+          done
+          cat api.log; exit 1
+
+      - name: Cargar los datos de demostración
+        env:
+          PGPASSWORD: fatfish
+        run: psql -h localhost -U fatfish -d fatfish -v ON_ERROR_STOP=1 -f sql/demo/02_cargar.sql
+
+      - name: Instalar k6
+        uses: grafana/setup-k6-action@v1
+
+      # The thresholds of perf/carga-pwa.js (p95 < 500 ms, p99 < 1 s, errors < 1 %) fail the job on a regression
+      - name: Prueba de carga (20 usuarios, 1 minuto)
+        run: k6 run --summary-export=k6-resumen.json perf/carga-pwa.js
+
+      - name: Resumen de la prueba
+        if: always()
+        run: |
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json, pathlib
+          p = pathlib.Path('k6-resumen.json')
+          if not p.exists():
+              print('## Prueba de carga\n\nNo se generó el resumen de k6.'); raise SystemExit
+          m = json.loads(p.read_text())['metrics']
+          d, f, r = m['http_req_duration'], m['http_req_failed'], m['http_reqs']
+          print('## Prueba de carga (k6)\n')
+          print('| Peticiones | Pet./s | Mediana | p95 | p99 | Errores |')
+          print('|---|---|---|---|---|---|')
+          print(f"| {r['count']} | {r['rate']:.1f} | {d['med']:.1f} ms | {d['p(95)']:.1f} ms | {d['p(99)']:.1f} ms | {f['value'] * 100:.2f} % |")
+          EOF
+
+      - name: Subir resumen de k6 y log de la API
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rendimiento-k6
+          path: |
+            k6-resumen.json
+            api.log
+          if-no-files-found: warn
+
   docker:
     name: Construir imagen Docker
     needs: build

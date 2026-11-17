@@ -58,6 +58,7 @@ src/main/java/com/fatfish/api
 └── config       # OpenAPI, llave de la API y límite de peticiones
 src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql, V2__…)
 sql/demo                          # Datos de demostración (se cargan a mano, no con Flyway)
+perf/carga-pwa.js                 # Prueba de carga con k6 (la corre el CI)
 docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
@@ -598,7 +599,7 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 ## Integración continua
 
 El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) corre en cada push a `main` y `develop`
-y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
+y en cada Pull Request hacia `main` o `develop`. Tiene tres jobs:
 
 **Compilar y probar**
 
@@ -610,7 +611,20 @@ y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
 5. `./mvnw package -DskipTests`.
 6. Sube como artefactos el `.jar` y los reportes de Surefire (estos últimos siempre, aunque fallen las pruebas).
 
-**Construir imagen Docker** (solo si el job anterior pasa)
+**Prueba de carga (k6)** (solo si *Compilar y probar* pasa)
+
+1. Levanta `postgres:17`, arranca el `.jar` del job anterior (Flyway crea el esquema) y carga `sql/demo/02_cargar.sql`.
+2. Corre [`perf/carga-pwa.js`](perf/carga-pwa.js) con 20 usuarios durante un minuto: 40 % ranking, 25 % perfil,
+   20 % historial, 10 % búsqueda y 5 % encuestas.
+3. Los umbrales del script son las metas del informe de rendimiento: p95 < 500 ms, p99 < 1 s y errores < 1 %. Si uno
+   no se cumple, k6 termina con error y el job falla.
+4. Publica en el *Summary* peticiones, latencias y errores, y sube `k6-resumen.json` y el log de la API.
+
+El mismo script sirve fuera del CI con `k6 run -e ESCENARIO=carga perf/carga-pwa.js` (50 usuarios, 4 minutos) o
+`-e ESCENARIO=estres` (hasta 400 usuarios). Contra producción se usa `-e BASE_URL=... -e API_KEY=... -e SOLO_LECTURA=1`
+y una carga baja, para no escribir datos ni generar costos.
+
+**Construir imagen Docker** (solo si *Compilar y probar* pasa)
 
 1. Construye la imagen con el `Dockerfile` multi-stage (todavía no se publica en un registro).
 2. Publica en el *Summary* el nombre y tamaño de la imagen.
