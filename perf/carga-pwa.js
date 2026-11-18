@@ -8,7 +8,7 @@
 //   k6 run -e BASE_URL=https://... -e API_KEY=... -e SOLO_LECTURA=1 perf/carga-pwa.js
 //
 // The thresholds are the goals of the performance report: if one fails, k6 exits with a
-// non-zero code and the CI job fails, so a latency regression stops the merge.
+// non-zero code and the CI job fails. The job only blocks a merge if it is a required check of the branch.
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
@@ -45,10 +45,31 @@ if (!ESCENARIOS[ESCENARIO]) {
   throw new Error(`Escenario desconocido "${ESCENARIO}". Usa uno de: ${Object.keys(ESCENARIOS).join(', ')}`);
 }
 
+// Outside a local API (the CI runner or docker compose) the script only reads and never runs "estres":
+// a forgotten SOLO_LECTURA would write fake surveys to Cloud SQL, and 400 users would take down the
+// single Cloud Run instance of the public demo
+const HOSTS_LOCALES = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal', 'fatfish-api'];
+const HOST = (BASE_URL.match(/^[a-z]+:\/\/(\[[^\]]+\]|[^/:?#]+)/i) || [])[1] || '';
+if (!HOSTS_LOCALES.includes(HOST.toLowerCase())) {
+  if (!SOLO_LECTURA) {
+    throw new Error(`${BASE_URL} no es una API local: agrega -e SOLO_LECTURA=1 para no escribir encuestas`);
+  }
+  if (ESCENARIO === 'estres') {
+    throw new Error(`El escenario "estres" solo se corre contra una API local, no contra ${BASE_URL}`);
+  }
+}
+
 export const options = {
   scenarios: { pwa: ESCENARIOS[ESCENARIO] },
+  // The global percentiles mix all routes: survey submissions are 5 % of the traffic, so a slow survey
+  // endpoint would hide under them. Each route also gets its own p95 (p99 needs more samples per route)
   thresholds: {
     http_req_duration: ['p(95)<500', 'p(99)<1000'],
+    'http_req_duration{endpoint:ranking}': ['p(95)<500'],
+    'http_req_duration{endpoint:perfil}': ['p(95)<500'],
+    'http_req_duration{endpoint:partidas}': ['p(95)<500'],
+    'http_req_duration{endpoint:jugadores}': ['p(95)<500'],
+    'http_req_duration{endpoint:encuesta}': ['p(95)<500'],
     http_req_failed: ['rate<0.01'],
     checks: ['rate>0.99'],
   },

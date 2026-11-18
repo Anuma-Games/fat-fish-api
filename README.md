@@ -617,7 +617,7 @@ y en cada Pull Request hacia `main` o `develop`. Tiene tres jobs:
 2. Calienta la API con unas 150 peticiones, para que el arranque en frío de la JVM no cuente en el p99.
 3. Corre [`perf/carga-pwa.js`](perf/carga-pwa.js) con 20 usuarios durante un minuto: 40 % ranking, 25 % perfil,
    20 % historial, 10 % búsqueda y 5 % encuestas.
-4. Los umbrales del script son las metas del informe de rendimiento: p95 < 500 ms, p99 < 1 s y errores < 1 %. Si uno
+4. Los umbrales del script son las metas del informe de rendimiento: p95 < 500 ms (en total y en cada endpoint), p99 < 1 s y errores < 1 %. Si uno
    no se cumple, k6 termina con error y el job falla.
 5. Publica en el *Summary* peticiones, latencias y errores, y sube `k6-resumen.json` y el log de la API.
 
@@ -625,6 +625,8 @@ El mismo script sirve fuera del CI con `k6 run -e ESCENARIO=carga perf/carga-pwa
 `-e ESCENARIO=estres` (hasta 400 usuarios). Contra producción se usa `-e BASE_URL=... -e API_KEY=... -e SOLO_LECTURA=1`
 y una carga baja, para no escribir datos ni generar costos. **`estres` nunca se corre contra producción:**
 Cloud Run tiene una sola instancia y la demostración es pública, así que 400 usuarios la dejarían sin servicio.
+El script lo impide: si `BASE_URL` no es una API local (`localhost`, `127.0.0.1`, `[::1]`, `host.docker.internal`
+o `fatfish-api`), se detiene antes de empezar cuando falta `SOLO_LECTURA=1` o cuando el escenario es `estres`.
 
 **Construir imagen Docker** (solo si *Compilar y probar* pasa)
 
