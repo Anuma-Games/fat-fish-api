@@ -657,3 +657,9 @@ Los artefactos se descargan desde la página *Summary* de cada ejecución en la 
 - Jesús Antonio Jiménez Mendoza
 - Ángel Gael Jurado Rodríguez
 - Andrik Rivera Esquer
+
+## Descargas y almacenamiento de CI
+
+La última compilación comprobada de `main` se conserva en Releases sin caducidad.
+Consulta la [política de descargas y limpieza automática](.github/ARTIFACTS.md) para conocer
+los archivos disponibles, la retención temporal en Actions y cómo previsualizar la limpieza.
