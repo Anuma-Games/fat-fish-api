@@ -53,6 +53,7 @@ renderiza en el navegador (CSR); esa estrategia está en el
     - [Flujo de ramas](#flujo-de-ramas)
   - [Equipo](#equipo)
   - [Descargas y almacenamiento de CI](#descargas-y-almacenamiento-de-ci)
+
 ---
 
 ## Tecnologías
@@ -617,7 +618,12 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 ## Integración continua
 
 El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) corre en cada push a `main` y `develop`
-y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
+y en cada Pull Request hacia `main` o `develop`. Tiene cinco jobs:
+
+**Verificar conservación de builds**
+
+1. Corre las pruebas de los scripts de limpieza y publicación de descargas (`test_prune_artifacts` y
+   `test_publish_latest_build`, en [`.github/scripts`](.github/scripts)).
 
 **Compilar y probar**
 
@@ -650,6 +656,12 @@ o `fatfish-api`), se detiene antes de empezar cuando falta `SOLO_LECTURA=1` o cu
 
 1. Construye la imagen con el `Dockerfile` multi-stage (todavía no se publica en un registro).
 2. Publica en el *Summary* el nombre y tamaño de la imagen.
+
+**Actualizar última descarga** (solo en un push a `main`, y si pasan los otros cuatro jobs)
+
+1. Descarga el `.jar` que *Compilar y probar* generó en esa misma ejecución.
+2. Lo publica en Releases como `fat-fish-api.jar` con
+   [`.github/scripts/publish_latest_build.py`](.github/scripts/publish_latest_build.py), y reemplaza la descarga anterior.
 
 Los artefactos se descargan desde la página *Summary* de cada ejecución en la pestaña **Actions**
 (sección *Artifacts*) o con `gh run download`.
