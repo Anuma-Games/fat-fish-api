@@ -183,7 +183,7 @@ insert into partida(id, jugador_id, clave_idempotencia, terminada_en, resultado,
 (106, 28, gen_random_uuid(), '2026-10-31 08:09-06', 'DERROTA', 7, 668, 6600, 4150, 4850, 2, 0, 2, 1988, '2026-10-31 08:09-06'),
 (107, 28, gen_random_uuid(), '2026-11-03 16:11-06', 'DERROTA', 3, 226, 2850, 2250, 2000, 0, 0, 0, 893, '2026-11-03 16:11-06');
 
--- Comodines comprados y usados: 1 Multiplicador de puntos, 2 Bola adicional, 3 Bonificación económica, 4 Cambio de color
+-- Comodines comprados y usados (ids de la tabla comodin)
 insert into partida_comodin(partida_id, comodin_id, veces_comprado, veces_usado) values
 (4, 1, 2, 4),
 (4, 3, 3, 3),

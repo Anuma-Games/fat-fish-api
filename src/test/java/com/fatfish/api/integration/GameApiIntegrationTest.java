@@ -81,6 +81,23 @@ class GameApiIntegrationTest {
     }
 
     @Test
+    void acceptsEveryJokerOfTheGameCatalog() throws Exception {
+        String token = register("andrik");
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM comodin", Integer.class)).isEqualTo(13);
+        assertThat(jdbc.queryForObject("SELECT nombre FROM comodin WHERE id = 1", String.class))
+                .isEqualTo("Zona caliente");
+        mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(match(1, "DERROTA", 0, """
+                                [ { "comodinId": 7, "vecesComprado": 1, "vecesUsado": 2 },
+                                  { "comodinId": 13, "vecesComprado": 2, "vecesUsado": 3 } ]""")))
+                .andExpect(status().isCreated());
+
+        assertThat(jdbc.queryForObject("SELECT sum(veces_usado) FROM partida_comodin", Integer.class)).isEqualTo(5);
+    }
+
+    @Test
     void storesAMatchBeyondRoundNineAndRejectsRoundZero() throws Exception {
         String token = register("andrik");
         String beyondNine = match(1, "DERROTA", 900, "[]").replace("\"rondaAlcanzada\": 5", "\"rondaAlcanzada\": 12");
@@ -143,7 +160,7 @@ class GameApiIntegrationTest {
                 .andExpect(header().string("WWW-Authenticate", "Bearer"));
         mockMvc.perform(post("/api/juego/partidas").header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(match(1, "DERROTA", 0, "[ { \"comodinId\": 9, \"vecesComprado\": 1, \"vecesUsado\": 1 } ]")))
+                        .content(match(1, "DERROTA", 0, "[ { \"comodinId\": 99, \"vecesComprado\": 1, \"vecesUsado\": 1 } ]")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("La partida incluye un comodín que no existe"));
 
