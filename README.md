@@ -11,8 +11,13 @@ y la [app móvil](https://github.com/Anuma-Games/fat-fish-mobile).
 
 El juego registra al jugador, guarda cada partida en su equipo (local first) y la envía a esta API
 cuando hay conexión. La API guarda cada partida una sola vez, actualiza las estadísticas del jugador
-y expone su perfil, historial, ranking mundial y búsqueda de jugadores para la PWA y la app móvil, que también
+y expone su perfil, historial, ranking mundial y búsqueda de jugadores para la PWA y la app móvil. La PWA también
 envía retroalimentación y la encuesta anónima.
+
+La API es un servicio **solo JSON**: no genera HTML ni sirve archivos de ninguna aplicación (no tiene plantillas ni
+recursos estáticos) y no configura CORS, porque la PWA la llama desde su mismo origen. La interfaz de la PWA se
+renderiza en el navegador (CSR); esa estrategia está en el
+[README de la PWA](https://github.com/Anuma-Games/fat-fish-pwa#44-estrategia-de-renderizado) y no se repite aquí.
 
 ## Contenido
 
@@ -34,6 +39,7 @@ envía retroalimentación y la encuesta anónima.
 - [Modelo de datos](#modelo-de-datos)
 - [Integración continua](#integración-continua)
 - [Equipo](#equipo)
+- [Descargas y almacenamiento de CI](#descargas-y-almacenamiento-de-ci)
 
 ---
 
@@ -602,7 +608,12 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 ## Integración continua
 
 El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) corre en cada push a `main` y `develop`
-y en cada Pull Request hacia `main` o `develop`. Tiene tres jobs:
+y en cada Pull Request hacia `main` o `develop`. Tiene cinco jobs:
+
+**Verificar conservación de builds**
+
+1. Corre las pruebas de los scripts de limpieza y publicación de descargas (`test_prune_artifacts` y
+   `test_publish_latest_build`, en [`.github/scripts`](.github/scripts)).
 
 **Compilar y probar**
 
@@ -635,6 +646,12 @@ o `fatfish-api`), se detiene antes de empezar cuando falta `SOLO_LECTURA=1` o cu
 
 1. Construye la imagen con el `Dockerfile` multi-stage (todavía no se publica en un registro).
 2. Publica en el *Summary* el nombre y tamaño de la imagen.
+
+**Actualizar última descarga** (solo en un push a `main`, y si pasan los otros cuatro jobs)
+
+1. Descarga el `.jar` que *Compilar y probar* generó en esa misma ejecución.
+2. Lo publica en Releases como `fat-fish-api.jar` con
+   [`.github/scripts/publish_latest_build.py`](.github/scripts/publish_latest_build.py), y reemplaza la descarga anterior.
 
 Los artefactos se descargan desde la página *Summary* de cada ejecución en la pestaña **Actions**
 (sección *Artifacts*) o con `gh run download`.
