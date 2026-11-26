@@ -1,18 +1,34 @@
 """Conserva artefactos recientes sin borrar los que usan ejecuciones activas."""
 import argparse
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import subprocess
 
 
+# "Re-run failed jobs" descarga el JAR de la ejecución original: se conserva un día.
+RETRY_WINDOW = timedelta(hours=24)
+
+
+def parse_time(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def newest(artifact):
-    return datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00")), artifact["id"]
+    return parse_time(artifact["created_at"]), artifact["id"]
 
 
-def plan_cleanup(artifacts, runs, policy):
+def can_retry(run, now):
+    if run.get("conclusion") == "success":
+        return False
+    finished = run.get("updated_at")
+    return finished is None or now - parse_time(finished) < RETRY_WINDOW
+
+
+def plan_cleanup(artifacts, runs, policy, now=None):
+    now = now or datetime.now(timezone.utc)
     groups = defaultdict(list)
     for artifact in artifacts:
         if artifact.get("expired") or artifact["name"] not in policy:
@@ -33,6 +49,8 @@ def plan_cleanup(artifacts, runs, policy):
             # Si nunca terminó bien CI, conserva el último build disponible de una rama.
             candidates = successful or candidates
         retained = candidates[:rule["keep"]]
+        if rule.get("build"):
+            retained += [a for a in group if a not in retained and can_retry(runs[a["workflow_run"]["id"]], now)]
         retained_ids = {a["id"] for a in retained}
         keep.extend(retained)
         delete.extend(a for a in group if a["id"] not in retained_ids)

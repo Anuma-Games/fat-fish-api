@@ -25,6 +25,7 @@ no se desactivan esas protecciones automáticamente.
 - Conserva los dos reportes más recientes de cada tipo, aunque las pruebas hayan fallado.
 - Respeta las ejecuciones activas: un JAR no se borra mientras otro job pueda necesitarlo.
   Los builds de pull requests se eliminan después de terminar CI y sus consumidores.
+- Conserva 24 horas el build de una ejecución fallida o cancelada, para que «Re-run failed jobs» lo encuentre.
 - Revisa de nuevo el estado de cada ejecución justo antes del borrado, para respetar reintentos.
 - No toca artefactos con nombres ajenos a la política, releases, cachés, Packages ni archivos del repositorio.
 - Las copias temporales de Actions caducan a los 7 días (builds) o 3 días (reportes), incluso si la limpieza falla.

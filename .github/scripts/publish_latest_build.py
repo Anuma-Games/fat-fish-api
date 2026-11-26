@@ -52,20 +52,14 @@ def publish(repo, sha, run_id, attempt, asset):
             output.write(f"## Última compilación\n\n[Descargar]({url})\n\nCommit: `{sha}`\n")
 
 
-def prepare_asset(source, name, zipped):
-    source = Path(source)
-    files = sorted(p for p in source.rglob("*") if p.is_file())
-    if not files:
-        raise ValueError("No hay archivos para publicar")
+def prepare_asset(source, name):
+    files = sorted(p for p in Path(source).rglob("*") if p.is_file())
+    if len(files) != 1 or files[0].suffix != ".jar":
+        raise ValueError("Se esperaba un único JAR")
     destination = Path("release-output")
     destination.mkdir(exist_ok=True)
     asset = destination / name
-    if zipped:
-        shutil.make_archive(str(asset.with_suffix("")), "zip", source)
-    else:
-        if len(files) != 1 or files[0].suffix != asset.suffix:
-            raise ValueError("Se esperaba un único APK o JAR")
-        shutil.copy2(files[0], asset)
+    shutil.copy2(files[0], asset)
     return asset
 
 
@@ -73,11 +67,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
     parser.add_argument("--name", required=True)
-    parser.add_argument("--zip", action="store_true")
     args = parser.parse_args()
-    if os.environ["GITHUB_REF"] != "refs/heads/main" or os.environ["GITHUB_EVENT_NAME"] not in {"push", "workflow_dispatch"}:
+    if os.environ["GITHUB_REF"] != "refs/heads/main" or os.environ["GITHUB_EVENT_NAME"] != "push":
         raise ValueError("Solo se publican builds de main, nunca de pull requests")
-    asset = prepare_asset(args.source, args.name, args.zip)
+    asset = prepare_asset(args.source, args.name)
     publish(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"],
             os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], asset)
 
