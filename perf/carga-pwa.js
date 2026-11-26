@@ -49,7 +49,12 @@ if (!ESCENARIOS[ESCENARIO]) {
 // a forgotten SOLO_LECTURA would write fake surveys to Cloud SQL, and 400 users would take down the
 // single Cloud Run instance of the public demo
 const HOSTS_LOCALES = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal', 'fatfish-api'];
-const HOST = (BASE_URL.match(/^[a-z]+:\/\/(\[[^\]]+\]|[^/:?#]+)/i) || [])[1] || '';
+// Credentials in the URL (http://localhost:x@host) would hide the real host from the check below
+const AUTORIDAD = (BASE_URL.match(/^[a-z]+:\/\/([^/?#]*)/i) || [])[1] || '';
+if (AUTORIDAD.includes('@')) {
+  throw new Error('BASE_URL no debe incluir credenciales; usa -e API_KEY=...');
+}
+const HOST = (AUTORIDAD.match(/^(\[[^\]]+\]|[^:]+)/) || [])[1] || '';
 if (!HOSTS_LOCALES.includes(HOST.toLowerCase())) {
   if (!SOLO_LECTURA) {
     throw new Error(`${BASE_URL} no es una API local: agrega -e SOLO_LECTURA=1 para no escribir encuestas`);

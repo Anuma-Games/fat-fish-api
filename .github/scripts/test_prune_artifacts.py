@@ -1,5 +1,8 @@
+from datetime import datetime, timezone
 import unittest
-from prune_artifacts import plan_cleanup
+from prune_artifacts import plan_cleanup as plan
+
+NOW = datetime(2026, 11, 26, 12, tzinfo=timezone.utc)
 
 POLICY = {"build": {"keep": 1, "build": True}, "report": {"keep": 2}}
 
@@ -9,8 +12,12 @@ def artifact(identifier, name="build", **extra):
                 workflow_run={"id": identifier}, size_in_bytes=1024, **extra)
 
 
-def run(status="completed", conclusion="success", event="push"):
-    return dict(status=status, conclusion=conclusion, event=event)
+def run(status="completed", conclusion="success", event="push", updated_at="2026-11-20T00:00:00Z"):
+    return dict(status=status, conclusion=conclusion, event=event, updated_at=updated_at)
+
+
+def plan_cleanup(artifacts, runs, policy):
+    return plan(artifacts, runs, policy, NOW)
 
 
 class CleanupTests(unittest.TestCase):
@@ -49,6 +56,21 @@ class CleanupTests(unittest.TestCase):
         keep, delete = plan_cleanup([artifact(1)], {1: run()}, POLICY)
         self.assertEqual(len(keep), 1)
         self.assertEqual(delete, [])
+
+    def test_recent_failed_build_stays_for_rerunning_failed_jobs(self):
+        rows = [artifact(1), artifact(2), artifact(3)]
+        runs = {1: run(), 2: run(conclusion="failure", event="pull_request", updated_at="2026-11-26T11:00:00Z"),
+                3: run(conclusion="failure", updated_at="2026-11-26T10:00:00Z")}
+        keep, delete = plan_cleanup(rows, runs, POLICY)
+        self.assertEqual({a["id"] for a in keep}, {1, 2, 3})
+        self.assertEqual(delete, [])
+
+    def test_failed_build_is_deleted_after_the_retry_window(self):
+        rows = [artifact(1), artifact(2)]
+        runs = {1: run(), 2: run(conclusion="failure", updated_at="2026-11-25T11:00:00Z")}
+        keep, delete = plan_cleanup(rows, runs, POLICY)
+        self.assertEqual([a["id"] for a in keep], [1])
+        self.assertEqual([a["id"] for a in delete], [2])
 
     def test_invalid_keep_count_cannot_produce_a_deletion_plan(self):
         with self.assertRaises(ValueError):

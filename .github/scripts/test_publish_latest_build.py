@@ -3,7 +3,6 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-import zipfile
 
 import publish_latest_build as publisher
 
@@ -13,7 +12,7 @@ class PublishTests(unittest.TestCase):
         with patch.object(publisher, 'is_current', return_value=True), \
              patch.object(publisher, 'gh', side_effect=RuntimeError('upload failed')) as gh:
             with self.assertRaises(RuntimeError):
-                publisher.publish('org/repo', 'sha', '20', '1', Path('app.apk'))
+                publisher.publish('org/repo', 'sha', '20', '1', Path('fat-fish-api.jar'))
         self.assertEqual(len(gh.call_args_list), 1)
         self.assertEqual(gh.call_args.args[1:3], ('release', 'create'))
 
@@ -25,19 +24,19 @@ class PublishTests(unittest.TestCase):
         with patch.object(publisher, 'is_current', return_value=True), \
              patch.object(publisher, 'gh', side_effect=execute) as gh:
             with self.assertRaises(RuntimeError):
-                publisher.publish('org/repo', 'sha', '20', '1', Path('app.apk'))
+                publisher.publish('org/repo', 'sha', '20', '1', Path('fat-fish-api.jar'))
         self.assertFalse(any(c.args[1:3] == ('release', 'delete') for c in gh.call_args_list))
 
     def test_old_commit_never_creates_or_deletes_a_release(self):
         with patch.object(publisher, 'is_current', return_value=False), \
              patch.object(publisher, 'gh') as gh:
-            publisher.publish('org/repo', 'old-sha', '20', '1', Path('app.apk'))
+            publisher.publish('org/repo', 'old-sha', '20', '1', Path('fat-fish-api.jar'))
         gh.assert_not_called()
 
     def test_changed_main_during_upload_removes_only_its_draft(self):
         with patch.object(publisher, 'is_current', side_effect=[True, False]), \
              patch.object(publisher, 'gh') as gh:
-            publisher.publish('org/repo', 'sha', '20', '1', Path('app.apk'))
+            publisher.publish('org/repo', 'sha', '20', '1', Path('fat-fish-api.jar'))
         self.assertEqual([c.args[2] for c in gh.call_args_list], ['create', 'delete'])
         self.assertEqual(gh.call_args.args[3], 'build-main-20-1')
 
@@ -48,35 +47,30 @@ class PublishTests(unittest.TestCase):
             return json.dumps([releases]) if args[0] == 'api' else ''
         with patch.object(publisher, 'is_current', return_value=True), \
              patch.object(publisher, 'gh', side_effect=execute) as gh:
-            publisher.publish('org/repo', 'sha', '20', '2', Path('app.apk'))
+            publisher.publish('org/repo', 'sha', '20', '2', Path('fat-fish-api.jar'))
         calls = gh.call_args_list
         self.assertEqual(calls[1].args[2], 'edit')
         deleted = [c.args[3] for c in calls if c.args[1:3] == ('release', 'delete')]
         self.assertEqual(deleted, ['build-main-19-1', 'build-main-20-1'])
 
-    def test_zip_contains_complete_build_at_archive_root(self):
+    def test_copies_the_single_jar_with_the_release_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / 'input'
-            (source / 'FatFish_Data').mkdir(parents=True)
-            (source / 'FatFish.exe').write_bytes(b'exe')
-            (source / 'FatFish_Data' / 'data').write_bytes(b'data')
+            source.mkdir()
+            (source / 'fat-fish-api.jar').write_bytes(b'jar')
             with patch.object(publisher, 'Path', wraps=Path) as path:
                 path.side_effect = lambda value: Path(tmp) / value if value == 'release-output' else Path(value)
-                asset = publisher.prepare_asset(source, 'game.zip', True)
-            with zipfile.ZipFile(asset) as archive:
-                self.assertEqual(archive.read('FatFish.exe'), b'exe')
-                self.assertEqual(archive.read('FatFish_Data/data'), b'data')
+                asset = publisher.prepare_asset(source, 'fat-fish-api.jar')
+            self.assertEqual(asset.read_bytes(), b'jar')
 
-    def test_missing_or_ambiguous_binaries_fail_before_publication(self):
+    def test_missing_or_ambiguous_jars_fail_before_publication(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
-                publisher.prepare_asset(tmp, 'app.apk', False)
+                publisher.prepare_asset(tmp, 'fat-fish-api.jar')
             (Path(tmp) / 'first.jar').write_bytes(b'jar')
-            with patch.object(publisher, 'Path', wraps=Path) as path:
-                path.side_effect = lambda value: Path(tmp) / value if value == 'release-output' else Path(value)
-                with self.assertRaises(ValueError):
-                    publisher.prepare_asset(tmp, 'app.apk', False)
-
+            (Path(tmp) / 'second.jar').write_bytes(b'jar')
+            with self.assertRaises(ValueError):
+                publisher.prepare_asset(tmp, 'fat-fish-api.jar')
 
 if __name__ == '__main__':
     unittest.main()
