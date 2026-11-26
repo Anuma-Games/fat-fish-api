@@ -15,6 +15,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  artifact-policy:
+    name: Verificar conservación de builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Pruebas de limpieza y publicación
+        working-directory: .github/scripts
+        run: python3 -m unittest test_prune_artifacts test_publish_latest_build
+
   build:
     name: Compilar y probar
     # Pinned instead of ubuntu-latest so the runner image changes only when we decide
@@ -69,6 +86,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: fat-fish-api-jar
+          retention-days: 7
           path: target/*.jar
           if-no-files-found: error
 
@@ -77,7 +95,109 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: surefire-reports
+          retention-days: 3
           path: target/surefire-reports/
+          if-no-files-found: warn
+
+  performance:
+    name: Prueba de carga (k6)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    # Same database as local development, loaded with the demo data (28 players, 107 matches)
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: fatfish
+          POSTGRES_USER: fatfish
+          POSTGRES_PASSWORD: fatfish
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fatfish -d fatfish"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Java 21 (Temurin)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Descargar el .jar del job de compilación
+        uses: actions/download-artifact@v7
+        with:
+          name: fat-fish-api-jar
+          path: target
+
+      # Flyway creates the schema when the API starts; the API key filter and the rate limit are off by default
+      - name: Arrancar la API
+        run: |
+          nohup java -Xmx512m -jar target/*.jar > api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/actuator/health && exit 0
+            sleep 2
+          done
+          cat api.log; exit 1
+
+      - name: Cargar los datos de demostración
+        env:
+          PGPASSWORD: fatfish
+        run: psql -h localhost -U fatfish -d fatfish -v ON_ERROR_STOP=1 -f sql/demo/02_cargar.sql
+
+      # The first requests pay for the JVM warm-up (class loading, JIT, connection pool); without this
+      # step they set the p99 and a slow shared runner could fail the job with no real regression
+      - name: Calentar la API
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/ranking?pagina=0"
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/perfil?id=$(( i % 28 + 1 ))"
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/partidas?id=$(( i % 28 + 1 ))"
+            curl -sf -o /dev/null "http://localhost:8080/api/pwa/jugadores?busqueda=an"
+            curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' \
+              -d '{"percepcionRiesgo":4,"cambioOpinion":3,"claridadMensaje":5,"comentario":"Calentamiento"}' \
+              http://localhost:8080/api/pwa/encuesta
+          done
+
+      - name: Instalar k6
+        uses: grafana/setup-k6-action@c47136d33d365efbeb9ae7266908b5dcf98cdece # v1.3.0
+
+      # The thresholds of perf/carga-pwa.js (p95 < 500 ms, p99 < 1 s, errors < 1 %) fail the job on a regression
+      - name: Prueba de carga (20 usuarios, 1 minuto)
+        run: k6 run --summary-export=k6-resumen.json perf/carga-pwa.js
+
+      - name: Resumen de la prueba
+        if: always()
+        run: |
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json, pathlib
+          p = pathlib.Path('k6-resumen.json')
+          if not p.exists():
+              print('## Prueba de carga\n\nNo se generó el resumen de k6.'); raise SystemExit
+          m = json.loads(p.read_text())['metrics']
+          d, f, r = m['http_req_duration'], m['http_req_failed'], m['http_reqs']
+          print('## Prueba de carga (k6)\n')
+          print('| Peticiones | Pet./s | Mediana | p95 | p99 | Errores |')
+          print('|---|---|---|---|---|---|')
+          print(f"| {r['count']} | {r['rate']:.1f} | {d['med']:.1f} ms | {d['p(95)']:.1f} ms | {d['p(99)']:.1f} ms | {f['value'] * 100:.2f} % |")
+          EOF
+
+      - name: Subir resumen de k6 y log de la API
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rendimiento-k6
+          retention-days: 3
+          path: |
+            k6-resumen.json
+            api.log
           if-no-files-found: warn
 
   docker:
@@ -102,3 +222,31 @@ jobs:
             echo "|---|---|"
             docker image ls fat-fish-api:${{ github.sha }} --format '| `{{.Repository}}:{{.Tag}}` | {{.Size}} |'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Actualizar última descarga
+    needs: [build, performance, docker, artifact-policy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Descargar el build comprobado de esta ejecución
+        uses: actions/download-artifact@v7
+        with:
+          name: fat-fish-api-jar
+          path: release-input
+
+      - name: Publicar y reemplazar la descarga anterior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/publish_latest_build.py --source release-input --name fat-fish-api.jar

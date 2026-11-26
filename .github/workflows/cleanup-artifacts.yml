@@ -1,0 +1,51 @@
+name: Limpiar artefactos
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: '37 7 * * *'
+  workflow_dispatch:
+    inputs:
+      aplicar:
+        description: Borrar los artefactos antiguos (sin marcar, solo muestra el plan)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: limpieza-artefactos
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Conservar builds y reportes recientes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # workflow_run tiene permisos de escritura: ejecuta solo código de la rama predeterminada.
+      - name: Checkout de la rama predeterminada
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Verificar la política de limpieza
+        run: python3 -m unittest discover -s .github/scripts -p test_prune_artifacts.py
+
+      - name: Limpiar artefactos completados
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_POLICY: '{"fat-fish-api-jar":{"keep":1,"build":true},"surefire-reports":{"keep":2},"rendimiento-k6":{"keep":2}}'
+          APPLY_CLEANUP: ${{ github.event_name != 'workflow_dispatch' || inputs.aplicar }}
+        run: |
+          if [ "$APPLY_CLEANUP" = "true" ]; then
+            python3 .github/scripts/prune_artifacts.py --apply
+          else
+            python3 .github/scripts/prune_artifacts.py
+          fi

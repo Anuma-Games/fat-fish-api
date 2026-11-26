@@ -11,8 +11,13 @@ y la [app móvil](https://github.com/Anuma-Games/fat-fish-mobile).
 
 El juego registra al jugador, guarda cada partida en su equipo (local first) y la envía a esta API
 cuando hay conexión. La API guarda cada partida una sola vez, actualiza las estadísticas del jugador
-y expone su perfil, historial, ranking mundial y búsqueda de jugadores para la PWA y la app móvil, que también
+y expone su perfil, historial, ranking mundial y búsqueda de jugadores para la PWA y la app móvil. La PWA también
 envía retroalimentación y la encuesta anónima.
+
+La API es un servicio **solo JSON**: no genera HTML ni sirve archivos de ninguna aplicación (no tiene plantillas ni
+recursos estáticos) y no configura CORS, porque la PWA la llama desde su mismo origen. La interfaz de la PWA se
+renderiza en el navegador (CSR); esa estrategia está en el
+[README de la PWA](https://github.com/Anuma-Games/fat-fish-pwa#44-estrategia-de-renderizado) y no se repite aquí.
 
 ## Contenido
 
@@ -34,6 +39,7 @@ envía retroalimentación y la encuesta anónima.
 - [Modelo de datos](#modelo-de-datos)
 - [Integración continua](#integración-continua)
 - [Equipo](#equipo)
+- [Descargas y almacenamiento de CI](#descargas-y-almacenamiento-de-ci)
 
 ---
 
@@ -58,6 +64,7 @@ src/main/java/com/fatfish/api
 └── config       # OpenAPI, llave de la API y límite de peticiones
 src/main/resources/db/migration   # Migraciones de Flyway (V1__esquema_inicial.sql, V2__…)
 sql/demo                          # Datos de demostración (se cargan a mano, no con Flyway)
+perf/carga-pwa.js                 # Prueba de carga con k6 (la corre el CI)
 docs/diagramas/modelo-datos.mmd   # Diagrama del modelo de datos (copia de referencia)
 .github/workflows/ci.yml          # Pipeline de CI
 .github/scripts/test_summary.py   # Resumen de pruebas para GitHub Actions
@@ -449,7 +456,9 @@ Requiere `Authorization: Bearer <token>`; sin token o con uno que no existe resp
 - `terminadaEn`: fecha en que el juego terminó la partida; el historial de la PWA la muestra y la ordena con ella.
 - `resultado`: `VICTORIA`, `DERROTA` o `ABANDONO`; `rondaAlcanzada`: 1 o más (sin límite superior, las rondas son
   infinitas); montos y contadores no negativos.
-- `comodines` es opcional. `comodinId` es el `id` de la tabla `comodin` (1 a 4) y no se puede repetir.
+- `comodines` es opcional. `comodinId` es el `id` de la tabla `comodin` (uno por comodín del juego) y no se puede repetir.
+  Un `comodinId` que no existe responde `400` y el juego ya no reintenta esa partida: un comodín nuevo en el juego
+  necesita antes su fila en `comodin` (una migración nueva) desplegada en la API.
 - Al guardar la partida, la API recalcula `estadistica_jugador` con todas las partidas del jugador en el orden de
   `terminadaEn`, así la racha de derrotas es correcta aunque una partida jugada sin conexión llegue tarde.
 - **Modo invitado:** el juego permite jugar sin cuenta; esas partidas solo se guardan en el dispositivo. Al crear la
@@ -573,7 +582,8 @@ API responde `200` con `created` en `false` y no inserta un duplicado. La encues
 
 `V1__esquema_inicial.sql` crea las tablas y carga el catálogo de comodines; `V2__partida_clave_idempotencia.sql`
 cambia el contador local de `partida` por la clave UUID de cada partida y agrega `terminada_en`;
-`V3__ronda_sin_limite.sql` cambia el check de `ronda_alcanzada` a `>= 1` para aceptar partidas que pasan de la ronda 9.
+`V3__ronda_sin_limite.sql` cambia el check de `ronda_alcanzada` a `>= 1` para aceptar partidas que pasan de la ronda 9;
+`V4__catalogo_comodines.sql` deja un `id` por cada comodín del juego en lugar de uno por familia.
 
 > **Las migraciones que ya están en `main` no se editan.** Flyway compara su contenido con el que ya aplicó y la API
 > no arranca si cambió. Cualquier cambio al esquema va en una migración nueva (`V3__…`, `V4__…`), que Flyway aplica
@@ -590,7 +600,7 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 | `jugador`             | Jugadores registrados desde el juego; `contrasena_hash` (BCrypt) y `token_hash` (SHA-256 del token) nunca salen en la API  |
 | `estadistica_jugador` | Totales de cada jugador (1:1 con `jugador`); el ranking se ordena por `puntaje_maximo` y desempata con `puntaje_maximo_en` |
 | `partida`             | Partidas terminadas; `clave_idempotencia` (UUID que genera el juego) es única y `terminada_en` es la fecha en que se jugó  |
-| `comodin`             | Catálogo de los 4 comodines del MVP                                                                                        |
+| `comodin`             | Catálogo de comodines del juego, un `id` por comodín que no se reutiliza                                                   |
 | `partida_comodin`     | Veces que se compró y usó cada comodín en una partida                                                                      |
 | `retroalimentacion`   | Retroalimentación anónima de la PWA; `clave_idempotencia` es única                                                         |
 | `encuesta`            | Encuesta anónima de la PWA; `clave_idempotencia` es única                                                                  |
@@ -598,7 +608,12 @@ si el esquema cambia, se actualizan las dos copias del diagrama.</sub>
 ## Integración continua
 
 El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) corre en cada push a `main` y `develop`
-y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
+y en cada Pull Request hacia `main` o `develop`. Tiene cinco jobs:
+
+**Verificar conservación de builds**
+
+1. Corre las pruebas de los scripts de limpieza y publicación de descargas (`test_prune_artifacts` y
+   `test_publish_latest_build`, en [`.github/scripts`](.github/scripts)).
 
 **Compilar y probar**
 
@@ -610,10 +625,33 @@ y en cada Pull Request hacia `main` o `develop`. Tiene dos jobs:
 5. `./mvnw package -DskipTests`.
 6. Sube como artefactos el `.jar` y los reportes de Surefire (estos últimos siempre, aunque fallen las pruebas).
 
-**Construir imagen Docker** (solo si el job anterior pasa)
+**Prueba de carga (k6)** (solo si *Compilar y probar* pasa)
+
+1. Levanta `postgres:17`, arranca el `.jar` del job anterior (Flyway crea el esquema) y carga `sql/demo/02_cargar.sql`.
+2. Calienta la API con unas 150 peticiones, para que el arranque en frío de la JVM no cuente en el p99.
+3. Corre [`perf/carga-pwa.js`](perf/carga-pwa.js) con 20 usuarios durante un minuto: 40 % ranking, 25 % perfil,
+   20 % historial, 10 % búsqueda y 5 % encuestas.
+4. Los umbrales del script son las metas del informe de rendimiento: p95 < 500 ms (en total y en cada endpoint), p99 < 1 s y errores < 1 %. Si uno
+   no se cumple, k6 termina con error y el job falla.
+5. Publica en el *Summary* peticiones, latencias y errores, y sube `k6-resumen.json` y el log de la API.
+
+El mismo script sirve fuera del CI con `k6 run -e ESCENARIO=carga perf/carga-pwa.js` (50 usuarios, 4 minutos) o
+`-e ESCENARIO=estres` (hasta 400 usuarios). Contra producción se usa `-e BASE_URL=... -e API_KEY=... -e SOLO_LECTURA=1`
+y una carga baja, para no escribir datos ni generar costos. **`estres` nunca se corre contra producción:**
+Cloud Run tiene una sola instancia y la demostración es pública, así que 400 usuarios la dejarían sin servicio.
+El script lo impide: si `BASE_URL` no es una API local (`localhost`, `127.0.0.1`, `[::1]`, `host.docker.internal`
+o `fatfish-api`), se detiene antes de empezar cuando falta `SOLO_LECTURA=1` o cuando el escenario es `estres`.
+
+**Construir imagen Docker** (solo si *Compilar y probar* pasa)
 
 1. Construye la imagen con el `Dockerfile` multi-stage (todavía no se publica en un registro).
 2. Publica en el *Summary* el nombre y tamaño de la imagen.
+
+**Actualizar última descarga** (solo en un push a `main`, y si pasan los otros cuatro jobs)
+
+1. Descarga el `.jar` que *Compilar y probar* generó en esa misma ejecución.
+2. Lo publica en Releases como `fat-fish-api.jar` con
+   [`.github/scripts/publish_latest_build.py`](.github/scripts/publish_latest_build.py), y reemplaza la descarga anterior.
 
 Los artefactos se descargan desde la página *Summary* de cada ejecución en la pestaña **Actions**
 (sección *Artifacts*) o con `gh run download`.
@@ -639,3 +677,9 @@ Los artefactos se descargan desde la página *Summary* de cada ejecución en la 
 - Jesús Antonio Jiménez Mendoza
 - Ángel Gael Jurado Rodríguez
 - Andrik Rivera Esquer
+
+## Descargas y almacenamiento de CI
+
+La última compilación comprobada de `main` se conserva en Releases sin caducidad.
+Consulta la [política de descargas y limpieza automática](.github/ARTIFACTS.md) para conocer
+los archivos disponibles, la retención temporal en Actions y cómo previsualizar la limpieza.
