@@ -132,7 +132,7 @@ jobs:
           java-version: '21'
 
       - name: Descargar el .jar del job de compilación
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: fat-fish-api-jar
           path: target
@@ -241,7 +241,7 @@ jobs:
           sparse-checkout: .github/scripts
 
       - name: Descargar el build comprobado de esta ejecución
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: fat-fish-api-jar
           path: release-input
